@@ -1,33 +1,39 @@
-import express from "express";
-import { createServer } from "http";
-import path from "path";
-import { fileURLToPath } from "url";
+/**
+ * MaatruMitra — HTTP server entry point.
+ *
+ * Runs migrations on startup, starts the Express app, and launches the job runner.
+ * Separate from app.ts so tests can import the app without starting a server.
+ */
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { createServer } from "node:http";
+import { createApp } from "./app.js";
+import { getDb } from "./db/client.js";
+import { startJobRunner, stopJobRunner } from "./jobs/runner.js";
 
-async function startServer() {
-  const app = express();
-  const server = createServer(app);
+// Ensure DB is initialized and WAL mode is set
+getDb();
 
-  // Serve static files from dist/public in production
-  const staticPath =
-    process.env.NODE_ENV === "production"
-      ? path.resolve(__dirname, "public")
-      : path.resolve(__dirname, "..", "dist", "public");
+const app = createApp();
+const server = createServer(app);
+const port = parseInt(process.env.PORT ?? "3000", 10);
 
-  app.use(express.static(staticPath));
+server.listen(port, () => {
+  console.log(`\nMaatruMitra server running on http://localhost:${port}/`);
+  console.log(`Environment: ${process.env.NODE_ENV ?? "development"}`);
+  console.log(`PROTOTYPE — No live patient data\n`);
+  startJobRunner();
+});
 
-  // Handle client-side routing - serve index.html for all routes
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(staticPath, "index.html"));
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+function shutdown(signal: string) {
+  console.log(`\n[Server] ${signal} received. Shutting down gracefully…`);
+  stopJobRunner();
+  server.close(() => {
+    console.log("[Server] HTTP server closed.");
+    process.exit(0);
   });
-
-  const port = process.env.PORT || 3000;
-
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
-  });
+  setTimeout(() => process.exit(1), 10_000);
 }
 
-startServer().catch(console.error);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
