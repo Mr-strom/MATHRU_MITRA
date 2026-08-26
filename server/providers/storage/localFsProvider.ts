@@ -60,6 +60,14 @@ export class LocalFsStorageProvider implements StorageProvider {
     fs.writeFileSync(filePath, data);
   }
 
+  async hasObject(key: string): Promise<boolean> {
+    const filePath = this.resolvePath(key);
+    if (!filePath.startsWith(this.uploadDir)) {
+      return false;
+    }
+    return fs.existsSync(filePath);
+  }
+
   async deleteObject(key: string): Promise<void> {
     const filePath = this.resolvePath(key);
     if (!filePath.startsWith(this.uploadDir)) {

@@ -75,6 +75,27 @@ export interface AuthUser {
   status?: string;
 }
 
+// ── Users ─────────────────────────────────────────────────────────────────────
+export const users = {
+  getAssignableAshas: () =>
+    request<{ items: AuthUser[] }>("GET", "/users/assignable-ashas"),
+};
+
+// ── Beneficiary references ────────────────────────────────────────────────────
+export const beneficiaryRefs = {
+  getDemo: () =>
+    request<BeneficiaryRefRecord>("GET", "/beneficiary-refs/demo"),
+};
+
+export interface BeneficiaryRefRecord {
+  id: string;
+  external_reference_alias: string;
+  area_id: string;
+  consent_status: string;
+  fixture: boolean;
+  notice: string;
+}
+
 // ── Voice notes ───────────────────────────────────────────────────────────────
 export const voiceNotes = {
   createIntent: (payload: {
@@ -85,6 +106,21 @@ export const voiceNotes = {
     consent_given: true;
     language_declared?: string;
   }) => request<{ voice_note: VoiceNoteRecord; upload_url: string }>("POST", "/voice-notes", payload),
+
+  uploadAudio: async (uploadUrl: string, audioBlob: Blob) => {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "synthetic_voice_note.webm");
+    const res = await fetch(uploadUrl, {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Audio upload failed", code: "UPLOAD_FAILED" }));
+      throw new ApiRequestError(res.status, err);
+    }
+    return res.json() as Promise<{ message: string; key: string }>;
+  },
 
   submit: (id: string) => request<{ message: string }>("POST", `/voice-notes/${id}/submit`),
 
@@ -125,6 +161,9 @@ export const drafts = {
     request<{ draft: DraftRecord; notice: string }>("POST", "/follow-up-drafts/from-transcript", {
       transcript_id: transcriptId,
     }),
+
+  markReviewed: (id: string) =>
+    request<{ draft: DraftRecord }>("POST", `/follow-up-drafts/${id}/mark-reviewed`),
 
   list: (cursor?: string) =>
     request<{ items: DraftRecord[]; next_cursor: string | null }>(
@@ -219,7 +258,7 @@ export interface SopExcerpt {
   citation_note: string;
 }
 
-// ── Audit events ──────────────────────────────────────────────────────────────
+// ── Audit events ──────────────────────────────────────────────────────
 export interface AuditEvent {
   id: string;
   actor_user_id: string | null;
@@ -228,6 +267,7 @@ export interface AuditEvent {
   event_type: string;
   previous_state: string | null;
   next_state: string | null;
+  safe_payload_json?: string | null;
   created_at: string;
 }
 

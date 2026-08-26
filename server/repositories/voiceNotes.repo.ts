@@ -72,3 +72,9 @@ export function findByBeneficiary(beneficiaryRefId: string): VoiceNoteRow[] {
     .prepare("SELECT * FROM voice_notes WHERE beneficiary_reference_id = ? ORDER BY created_at DESC")
     .all(beneficiaryRefId) as VoiceNoteRow[];
 }
+
+export function findByStorageKey(storageKey: string): VoiceNoteRow | undefined {
+  return getDb()
+    .prepare("SELECT * FROM voice_notes WHERE storage_key = ?")
+    .get(storageKey) as VoiceNoteRow | undefined;
+}

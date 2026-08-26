@@ -5,11 +5,14 @@
  */
 
 import { beforeAll, afterAll, vi } from "vitest";
-import { DatabaseSync } from "node:sqlite";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import bcrypt from "bcryptjs";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

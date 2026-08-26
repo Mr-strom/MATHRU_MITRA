@@ -12,6 +12,7 @@ import * as draftsRepo from "../repositories/followUpDrafts.repo.js";
 import * as tasksRepo from "../repositories/tasks.repo.js";
 import * as reviewWorkflow from "../services/reviewWorkflow.service.js";
 import { PolicyError } from "../services/errors.js";
+import { ANMDismissSchema } from "@shared/schemas.js";
 
 // ── Test fixture builders ─────────────────────────────────────────────────────
 
@@ -158,7 +159,6 @@ describe("Review workflow — ANM confirm", () => {
 
   it("rejects dismissal without a reason", () => {
     // ANMDismissSchema requires reason.min(1)
-    const { ANMDismissSchema } = require("@shared/schemas.js");
     const r = ANMDismissSchema.safeParse({ reason: "" });
     expect(r.success).toBe(false);
   });

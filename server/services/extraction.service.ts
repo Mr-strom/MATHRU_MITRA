@@ -106,10 +106,10 @@ export async function runExtraction(
     transcript_id: transcriptId,
     administrative_category: parsed.data.follow_up_category,
     summary: parsed.data.worker_observation_summary,
-    proposed_due_at: parsed.data.proposed_due_at ?? null,
+    proposed_due_at: parsed.data.proposed_due_at ?? undefined,
     extraction_confidence: parsed.data.uncertainty_note ? "uncertain" : "standard",
     extraction_raw_json: JSON.stringify(parsed.data),
-    citation_id: citationId,
+    citation_id: citationId ?? undefined,
   });
 
   auditEventsRepo.emit({

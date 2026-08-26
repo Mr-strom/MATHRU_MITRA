@@ -63,7 +63,7 @@ export const CreateVoiceNoteSchema = z.object({
   language_declared: z.string().default("kn"),
   /** Consent must be explicitly provided before recording is accepted. */
   consent_given: z.literal(true, {
-    errorMap: () => ({ message: "Consent must be explicitly provided before a voice note can be recorded." }),
+    message: "Consent must be explicitly provided before a voice note can be recorded.",
   }),
   mime_type: z.string(),
   byte_size: z.number().int().positive(),

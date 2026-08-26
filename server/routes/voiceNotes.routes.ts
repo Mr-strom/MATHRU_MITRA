@@ -38,6 +38,13 @@ router.post(
   }
 );
 
+const ALLOWED_MIME_TYPES = (
+  process.env.ALLOWED_MIME_TYPES ??
+  "audio/webm,audio/ogg,audio/wav,audio/mp4,audio/mpeg,audio/flac"
+).split(",");
+
+const MAX_BYTES = parseInt(process.env.MAX_UPLOAD_BYTES ?? "26214400", 10);
+
 // POST /voice-notes/upload/:key — Server-mediated file upload (local dev)
 router.post(
   "/upload/:key",
@@ -50,7 +57,37 @@ router.post(
         res.status(400).json({ error: "No file uploaded.", code: "NO_FILE" });
         return;
       }
+
+      if (!ALLOWED_MIME_TYPES.includes(req.file.mimetype)) {
+        res.status(422).json({
+          error: `MIME type ${req.file.mimetype} is not allowed. Allowed: ${ALLOWED_MIME_TYPES.join(", ")}`,
+          code: "UNSUPPORTED_MIME_TYPE",
+        });
+        return;
+      }
+
+      if (req.file.size > MAX_BYTES) {
+        res.status(422).json({
+          error: `File size exceeds ${MAX_BYTES} byte limit.`,
+          code: "FILE_TOO_LARGE",
+        });
+        return;
+      }
+
       const key = decodeURIComponent(req.params.key);
+      const vn = voiceNotesRepo.findByStorageKey(key);
+      if (!vn) {
+        throw new NotFoundError("Voice note record for this storage key not found.");
+      }
+
+      if (vn.created_by_user_id !== req.user!.id) {
+        throw new PolicyError("You can only upload audio for your own voice notes.", "FORBIDDEN");
+      }
+
+      if (vn.status !== "DRAFT") {
+        throw new PolicyError(`Cannot upload audio to voice note in status ${vn.status}.`, "ILLEGAL_STATUS");
+      }
+
       const storage = getStorageProvider();
       await storage.putObject(key, req.file.buffer, req.file.mimetype);
       res.json({ message: "File stored.", key });
@@ -61,9 +98,9 @@ router.post(
 );
 
 // POST /voice-notes/:id/submit — Queue for transcription
-router.post("/:id/submit", requireAuth, requireRole("ASHA_WORKER"), (req, res, next) => {
+router.post("/:id/submit", requireAuth, requireRole("ASHA_WORKER"), async (req, res, next) => {
   try {
-    voiceNoteService.submitForTranscription(req.params.id, req.user!.id);
+    await voiceNoteService.submitForTranscription(req.params.id, req.user!.id);
     res.json({ message: "Voice note submitted for transcription." });
   } catch (err) {
     next(err);
@@ -124,13 +161,19 @@ router.post(
 router.get("/file/:key", requireAuth, async (req, res, next) => {
   try {
     const key = decodeURIComponent(req.params.key);
-    // Verify the user has access to a voice note with this key
-    const vn = (voiceNotesRepo.findByCreator(req.user!.id) as voiceNotesRepo.VoiceNoteRow[])
-      .find((v) => v.storage_key === key);
-    if (!vn && req.user!.role === "ASHA_WORKER") {
-      next(new NotFoundError("File not found or access denied."));
-      return;
+    // Resolve voice note first, then enforce role and area authorization
+    const vn = voiceNotesRepo.findByStorageKey(key);
+    if (!vn) {
+      throw new NotFoundError("Audio file not found.");
     }
+
+    voiceNoteService.getAuthorized(
+      vn.id,
+      req.user!.id,
+      req.user!.role,
+      req.user!.assigned_area_id
+    );
+
     const storage = getStorageProvider() as import("../providers/storage/localFsProvider.js").LocalFsStorageProvider;
     if (!("resolvePath" in storage)) {
       next(new PolicyError("File serving not available with this storage provider.", "NOT_SUPPORTED"));

@@ -30,6 +30,20 @@ router.post(
   validate(CreateDraftFromTranscriptSchema),
   async (req, res, next) => {
     try {
+      const transcript = await import("../repositories/transcripts.repo.js").then((m) =>
+        m.findById(req.body.transcript_id)
+      );
+      if (!transcript) throw new NotFoundError("Transcript not found.");
+
+      // Check caller authorization on the source voice note
+      const voiceNoteService = await import("../services/voiceNote.service.js");
+      voiceNoteService.getAuthorized(
+        transcript.voice_note_id,
+        req.user!.id,
+        req.user!.role,
+        req.user!.assigned_area_id
+      );
+
       const draft = await extractionService.runExtraction(req.body.transcript_id);
       res.status(201).json({
         draft,
@@ -76,8 +90,12 @@ router.get(
 // GET /follow-up-drafts/:id
 router.get("/:id", requireAuth, (req, res, next) => {
   try {
-    const draft = draftsRepo.findById(req.params.id);
-    if (!draft) throw new NotFoundError("Draft not found.");
+    const draft = reviewWorkflow.getAuthorizedDraft(
+      req.params.id,
+      req.user!.id,
+      req.user!.role,
+      req.user!.assigned_area_id
+    );
 
     const auditHistory = auditEventsRepo.findByEntity("follow_up_draft", draft.id, 20);
     const citation = draft.citation_id ? sopRepo.findById(draft.citation_id) : null;
@@ -88,7 +106,26 @@ router.get("/:id", requireAuth, (req, res, next) => {
   }
 });
 
-// POST /follow-up-drafts/:id/submit-review
+// POST /follow-up-drafts/:id/mark-reviewed — Worker reviews draft (TRANSCRIPT_READY -> WORKER_REVIEWED)
+router.post(
+  "/:id/mark-reviewed",
+  requireAuth,
+  requireRole("ASHA_WORKER"),
+  (req, res, next) => {
+    try {
+      const draft = reviewWorkflow.markWorkerReviewed(
+        req.params.id,
+        req.user!.id,
+        req.user!.role
+      );
+      res.json({ draft });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /follow-up-drafts/:id/submit-review — Submits reviewed draft to ANM queue
 router.post(
   "/:id/submit-review",
   requireAuth,
@@ -99,7 +136,8 @@ router.post(
       const draft = reviewWorkflow.submitForReview(
         req.params.id,
         req.user!.id,
-        req.body.worker_note
+        req.body.worker_note,
+        req.user!.role
       );
       res.json({ draft });
     } catch (err) {
@@ -116,7 +154,13 @@ router.post(
   validate(ANMConfirmSchema),
   (req, res, next) => {
     try {
-      const result = reviewWorkflow.confirm(req.params.id, req.user!.id, req.body);
+      const result = reviewWorkflow.confirm(
+        req.params.id,
+        req.user!.id,
+        req.body,
+        req.user!.role,
+        req.user!.assigned_area_id
+      );
       res.json({
         draft: result.draft,
         task: result.task,
@@ -137,7 +181,13 @@ router.post(
   validate(ANMReviseSchema),
   (req, res, next) => {
     try {
-      const draft = reviewWorkflow.revise(req.params.id, req.user!.id, req.body);
+      const draft = reviewWorkflow.revise(
+        req.params.id,
+        req.user!.id,
+        req.body,
+        req.user!.role,
+        req.user!.assigned_area_id
+      );
       res.json({ draft });
     } catch (err) {
       next(err);
@@ -153,7 +203,13 @@ router.post(
   validate(ANMDismissSchema),
   (req, res, next) => {
     try {
-      const draft = reviewWorkflow.dismiss(req.params.id, req.user!.id, req.body);
+      const draft = reviewWorkflow.dismiss(
+        req.params.id,
+        req.user!.id,
+        req.body,
+        req.user!.role,
+        req.user!.assigned_area_id
+      );
       res.json({ draft });
     } catch (err) {
       next(err);

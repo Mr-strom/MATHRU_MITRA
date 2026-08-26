@@ -20,6 +20,9 @@ export interface StorageProvider {
   /** Store file data (used by server-mediated upload). */
   putObject(key: string, data: Buffer, mimeType: string): Promise<void>;
 
+  /** Check if a stored object exists. */
+  hasObject(key: string): Promise<boolean>;
+
   /** Delete a stored object (for retention/deletion workflows). */
   deleteObject(key: string): Promise<void>;
 }

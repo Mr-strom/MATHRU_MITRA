@@ -9,8 +9,12 @@
  * For PostgreSQL (production): swap this module for a pg-based adapter.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { createRequire } from "node:module";
 import path from "node:path";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite");
+type DatabaseSync = InstanceType<typeof DatabaseSync>;
 
 const dbUrl = process.env.DATABASE_URL ?? "./dev.sqlite";
 

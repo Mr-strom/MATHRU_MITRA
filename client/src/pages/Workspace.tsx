@@ -2,25 +2,32 @@
  * MaatruMitra — Authenticated workspace page.
  *
  * A clearly separated demo workspace for ASHA and ANM roles.
- * Shows the real API-connected workflow in a panel that keeps the
- * landing page untouched.
+ * Shows the real API-connected workflow with strict role boundaries.
  *
  * Uses existing design tokens. Labelled PROTOTYPE throughout.
  * No clinical data, no live patients.
  *
- * Design philosophy: dark console aesthetic matching the landing page demo panel.
- * State machine is visible to the user at all times.
+ * Flow:
+ * ASHA: Consented upload -> Real synthetic audio attachment -> STT transcript
+ *       -> Edit & save revision -> Create draft from revision -> Mark WORKER_REVIEWED
+ *       -> Submit for ANM review (AWAITING_ANM_REVIEW)
+ * ANM:  Area-scoped queue -> Select assignable ASHA owner -> Confirm / Revise / Dismiss
+ * ASHA: Acknowledge & Complete task -> Audit history
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useLocation } from "wouter";
 import {
   LogOut, ShieldCheck, Mic, FileText, CheckCircle,
   XCircle, RefreshCw, AlertTriangle, Headphones, Sparkles,
-  ChevronRight, Clock, User
+  ChevronRight, Clock, User, Edit3, History, ChevronDown, ChevronUp
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
-import { voiceNotes, drafts, tasks, sop, type DraftRecord, type TaskRecord, type TranscriptRecord, type SopExcerpt, ApiRequestError } from "../lib/api";
+import {
+  voiceNotes, drafts, tasks, sop, users, beneficiaryRefs,
+  type DraftRecord, type TaskRecord, type TranscriptRecord,
+  type SopExcerpt, type AuthUser, type AuditEvent, ApiRequestError
+} from "../lib/api";
 
 const logoImage = "/manus-storage/maatrumitra-care-orbit-logo_1689796a.png";
 
@@ -36,12 +43,11 @@ interface WorkspaceState {
   draft: DraftRecord | null;
   task: TaskRecord | null;
   citation: SopExcerpt | null;
+  auditHistory: AuditEvent[];
   error: string | null;
   loading: boolean;
   notice: string | null;
 }
-
-const DEMO_BEN_REF_ID = ""; // will be filled from API or seeded fixture
 
 export default function Workspace() {
   const { user, logout } = useAuth();
@@ -56,13 +62,24 @@ export default function Workspace() {
     draft: null,
     task: null,
     citation: null,
+    auditHistory: [],
     error: null,
     loading: false,
     notice: null,
   });
+
   const [editedTranscript, setEditedTranscript] = useState("");
   const [reviewNote, setReviewNote] = useState("");
   const [dismissReason, setDismissReason] = useState("");
+
+  // ANM state
+  const [assignableAshas, setAssignableAshas] = useState<AuthUser[]>([]);
+  const [selectedOwnerId, setSelectedOwnerId] = useState("");
+  const [isRevising, setIsRevising] = useState(false);
+  const [revisedSummary, setRevisedSummary] = useState("");
+  const [revisedDueDays, setRevisedDueDays] = useState(2);
+  const [showAuditDrawer, setShowAuditDrawer] = useState(false);
+  const [areaDrafts, setAreaDrafts] = useState<DraftRecord[]>([]);
 
   if (!user) {
     navigate("/login");
@@ -75,40 +92,68 @@ export default function Workspace() {
   const setLoading = (loading: boolean) =>
     setState((s) => ({ ...s, loading, error: null }));
 
+  const isASHA = user.role === "ASHA_WORKER";
+  const isANM = user.role === "ANM_REVIEWER" || user.role === "PHC_ADMIN";
+
+  // Load assignable ASHAs & queue for ANM
+  useEffect(() => {
+    if (isANM) {
+      users.getAssignableAshas()
+        .then((res) => {
+          setAssignableAshas(res.items);
+          if (res.items.length > 0 && !selectedOwnerId) {
+            setSelectedOwnerId(res.items[0].id);
+          }
+        })
+        .catch(() => {});
+
+      drafts.list()
+        .then((res) => setAreaDrafts(res.items))
+        .catch(() => {});
+    }
+  }, [isANM]);
+
+  // Load audit history when draft is created or updated
+  const refreshAuditHistory = useCallback(async (draftId: string) => {
+    try {
+      const res = await drafts.get(draftId);
+      setState((s) => ({ ...s, auditHistory: res.audit_history, citation: res.citation }));
+    } catch {}
+  }, []);
+
   // ── ASHA ACTIONS ──────────────────────────────────────────────────────────
 
   const startDemoFlow = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Create upload intent with demo beneficiary reference
-      // In a real app the user would select the beneficiary. Here we use BEN-DEMO-001.
-      const benRefResponse = await fetch("/api/v1/beneficiary-refs/demo", { credentials: "include" })
-        .then((r) => r.json())
-        .catch(() => null);
+      // 1. Fetch synthetic fixture BEN-DEMO-001
+      const benRef = await beneficiaryRefs.getDemo();
 
-      const benRefId = benRefResponse?.id ?? "DEMO_PLACEHOLDER";
-
+      // 2. Create upload intent
       const intentResult = await voiceNotes.createIntent({
-        beneficiary_reference_id: benRefId,
+        beneficiary_reference_id: benRef.id,
         mime_type: "audio/webm",
-        byte_size: 28672, // demo 28KB
-        duration_seconds: 28,
+        byte_size: 1024,
+        duration_seconds: 15,
         consent_given: true,
         language_declared: "kn",
       });
 
-      // 2. Immediately submit (simulating a completed upload in demo)
+      // 3. Attach synthetic audio fixture (upload synthetic webm header bytes)
+      const syntheticAudio = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], { type: "audio/webm" });
+      await voiceNotes.uploadAudio(intentResult.upload_url, syntheticAudio);
+
+      // 4. Submit for transcription
       await voiceNotes.submit(intentResult.voice_note.id);
 
       setState((s) => ({
         ...s,
         step: "note_created",
         voiceNoteId: intentResult.voice_note.id,
-        notice: "Voice note submitted. Transcription in progress (fake provider — ~15s).",
+        notice: "Synthetic voice note uploaded & submitted. Transcription in progress (~15s).",
         loading: false,
       }));
 
-      // 3. Poll for transcript
       pollForTranscript(intentResult.voice_note.id);
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -124,7 +169,7 @@ export default function Workspace() {
     const poll = async () => {
       attempts++;
       if (attempts > 20) {
-        setError("Transcription timed out. Try refreshing.");
+        setError("Transcription timed out. Please try again.");
         return;
       }
       try {
@@ -137,7 +182,7 @@ export default function Workspace() {
             step: "transcript_ready",
             transcript: providerTranscript,
             transcriptId: providerTranscript.id,
-            notice: "Transcript ready. Review and correct it before creating a follow-up draft.",
+            notice: "STT transcript ready. Review and correct before creating follow-up draft.",
             loading: false,
           }));
         } else {
@@ -150,84 +195,100 @@ export default function Workspace() {
     setTimeout(poll, 3000);
   }, []);
 
-  const saveTranscriptRevision = useCallback(async () => {
+  // Step 2 & 3: Save worker revision -> Create draft from revision -> Mark WORKER_REVIEWED
+  const saveAndCreateDraft = useCallback(async () => {
     if (!state.voiceNoteId) return;
     setLoading(true);
     try {
-      const result = await voiceNotes.addTranscriptRevision(
+      // 1. Save worker edited revision
+      const revRes = await voiceNotes.addTranscriptRevision(
         state.voiceNoteId,
         editedTranscript,
         "kn"
       );
-      setState((s) => ({
-        ...s,
-        transcriptId: result.transcript.id,
-        transcript: result.transcript,
-        loading: false,
-        notice: "Transcript revision saved.",
-      }));
-    } catch (err) {
-      if (err instanceof ApiRequestError) setError(err.body.error);
-      else setError("Failed to save transcript revision.");
-    }
-  }, [state.voiceNoteId, editedTranscript]);
 
-  const createDraft = useCallback(async () => {
-    if (!state.transcriptId) return;
-    setLoading(true);
-    try {
-      const result = await drafts.createFromTranscript(state.transcriptId);
-      // Load citation if available
+      // 2. Create draft strictly from the worker-reviewed revision
+      const draftRes = await drafts.createFromTranscript(revRes.transcript.id);
+
+      // 3. Mark worker reviewed (TRANSCRIPT_READY -> WORKER_REVIEWED)
+      const reviewedRes = await drafts.markReviewed(draftRes.draft.id);
+
       let citation: SopExcerpt | null = null;
-      if (result.draft.citation_id) {
+      if (reviewedRes.draft.citation_id) {
         const sopResult = await sop.search("supplement routine home visit", 1);
         citation = sopResult.excerpts[0] ?? null;
       }
+
       setState((s) => ({
         ...s,
         step: "draft_ready",
-        draftId: result.draft.id,
-        draft: result.draft,
+        transcriptId: revRes.transcript.id,
+        transcript: revRes.transcript,
+        draftId: reviewedRes.draft.id,
+        draft: reviewedRes.draft,
         citation,
-        notice: result.notice,
+        notice: "Worker revision saved and draft verified (WORKER_REVIEWED). Ready for ANM review.",
         loading: false,
       }));
+
+      refreshAuditHistory(reviewedRes.draft.id);
     } catch (err) {
-      if (err instanceof ApiRequestError) setError(`${err.body.error}${err.body.note ? "\n" + err.body.note : ""}`);
+      if (err instanceof ApiRequestError) setError(err.body.error);
       else setError("Failed to create administrative draft.");
     }
-  }, [state.transcriptId]);
+  }, [state.voiceNoteId, editedTranscript, refreshAuditHistory]);
 
   const submitForReview = useCallback(async () => {
     if (!state.draftId) return;
     setLoading(true);
     try {
-      // Move draft to WORKER_REVIEWED first
-      const vnState = await voiceNotes.get(state.voiceNoteId!);
-      // The draft is already in TRANSCRIPT_READY; we need WORKER_REVIEWED to submit
-      // For demo: directly submit (the service accepts WORKER_REVIEWED → AWAITING_ANM_REVIEW)
       const result = await drafts.submitForReview(state.draftId, reviewNote || undefined);
       setState((s) => ({
         ...s,
         step: "submitted",
         draft: result.draft,
-        notice: "Draft submitted for ANM review. No automated message sent.",
+        notice: "Draft submitted for ANM review (AWAITING_ANM_REVIEW). No automated message sent.",
         loading: false,
       }));
+      refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
       else setError("Failed to submit for review.");
     }
-  }, [state.draftId, state.voiceNoteId, reviewNote]);
+  }, [state.draftId, reviewNote, refreshAuditHistory]);
 
   // ── ANM ACTIONS ───────────────────────────────────────────────────────────
 
+  const selectDraftToReview = useCallback(async (d: DraftRecord) => {
+    setLoading(true);
+    try {
+      const fullDraft = await drafts.get(d.id);
+      setState((s) => ({
+        ...s,
+        step: "draft_ready",
+        draftId: fullDraft.draft.id,
+        draft: fullDraft.draft,
+        citation: fullDraft.citation,
+        auditHistory: fullDraft.audit_history,
+        notice: "Reviewing area draft. Select an ASHA owner before confirming.",
+        loading: false,
+      }));
+      setRevisedSummary(fullDraft.draft.summary ?? "");
+    } catch (err) {
+      if (err instanceof ApiRequestError) setError(err.body.error);
+      else setError("Failed to load draft.");
+    }
+  }, []);
+
   const confirmDraft = useCallback(async () => {
-    if (!state.draftId || !user) return;
+    if (!state.draftId || !selectedOwnerId) {
+      setError("Please select an eligible ASHA task owner.");
+      return;
+    }
     setLoading(true);
     try {
       const due = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
-      const result = await drafts.confirm(state.draftId, user.id, due, reviewNote || undefined);
+      const result = await drafts.confirm(state.draftId, selectedOwnerId, due, reviewNote || undefined);
       setState((s) => ({
         ...s,
         step: "task_open",
@@ -237,11 +298,40 @@ export default function Workspace() {
         notice: result.notice,
         loading: false,
       }));
+      refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
       else setError("Failed to confirm draft.");
     }
-  }, [state.draftId, user, reviewNote]);
+  }, [state.draftId, selectedOwnerId, reviewNote, refreshAuditHistory]);
+
+  const executeRevise = useCallback(async () => {
+    if (!state.draftId || !reviewNote.trim()) {
+      setError("Reviewer note is required when revising a draft.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const due = new Date(Date.now() + revisedDueDays * 24 * 60 * 60 * 1000).toISOString();
+      const result = await drafts.revise(state.draftId, {
+        owner_user_id: selectedOwnerId || undefined,
+        due_at: due,
+        reviewer_note: reviewNote,
+        revised_summary: revisedSummary || undefined,
+      });
+      setState((s) => ({
+        ...s,
+        draft: result.draft,
+        notice: "Draft revised successfully. Changes logged in audit trail.",
+        loading: false,
+      }));
+      setIsRevising(false);
+      refreshAuditHistory(state.draftId);
+    } catch (err) {
+      if (err instanceof ApiRequestError) setError(err.body.error);
+      else setError("Failed to revise draft.");
+    }
+  }, [state.draftId, reviewNote, revisedDueDays, selectedOwnerId, revisedSummary, refreshAuditHistory]);
 
   const dismissDraft = useCallback(async () => {
     if (!state.draftId || !dismissReason.trim()) {
@@ -257,19 +347,21 @@ export default function Workspace() {
         notice: "Draft dismissed. No action was taken.",
         loading: false,
       }));
+      refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
       else setError("Failed to dismiss draft.");
     }
-  }, [state.draftId, dismissReason]);
+  }, [state.draftId, dismissReason, refreshAuditHistory]);
+
+  // ── TASK COMPLETION ───────────────────────────────────────────────────────
 
   const completeTask = useCallback(async () => {
     if (!state.taskId) return;
     setLoading(true);
     try {
-      // Acknowledge first
       await tasks.acknowledge(state.taskId);
-      const result = await tasks.complete(state.taskId, "Demo task completed via workspace.");
+      const result = await tasks.complete(state.taskId, "Completed home visit follow-up.");
       setState((s) => ({
         ...s,
         step: "task_done",
@@ -277,24 +369,24 @@ export default function Workspace() {
         notice: result.notice,
         loading: false,
       }));
+      if (state.draftId) refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
       else setError("Failed to complete task.");
     }
-  }, [state.taskId]);
+  }, [state.taskId, state.draftId, refreshAuditHistory]);
 
   const reset = useCallback(() => {
     setState({
       step: "idle", voiceNoteId: null, transcriptId: null,
       draftId: null, taskId: null, transcript: null, draft: null,
-      task: null, citation: null, error: null, loading: false, notice: null,
+      task: null, citation: null, auditHistory: [], error: null, loading: false, notice: null,
     });
     setEditedTranscript("");
     setReviewNote("");
     setDismissReason("");
+    setIsRevising(false);
   }, []);
-
-  // ── STEP LABELS ───────────────────────────────────────────────────────────
 
   const steps: Array<{ id: WorkspaceStep | string; label: string; done: boolean }> = [
     { id: "note_created", label: "Voice note", done: ["note_created","transcript_ready","draft_ready","submitted","task_open","task_done"].includes(state.step) },
@@ -303,9 +395,6 @@ export default function Workspace() {
     { id: "submitted", label: "ANM review", done: ["submitted","task_open","task_done"].includes(state.step) },
     { id: "task_open", label: "Task", done: ["task_open","task_done"].includes(state.step) },
   ];
-
-  const isASHA = user.role === "ASHA_WORKER";
-  const isANM = user.role === "ANM_REVIEWER" || user.role === "PHC_ADMIN";
 
   return (
     <main className="workspace-shell">
@@ -327,7 +416,7 @@ export default function Workspace() {
       {/* Prototype notice */}
       <div className="workspace-proto-bar" role="note" aria-label="Prototype notice">
         <ShieldCheck size={13} />
-        <span>PROTOTYPE — No live patient data · Administrative coordination demo · Human confirmation required for every action</span>
+        <span>PROTOTYPE — Synthetic identities only · Administrative workflow · Human confirmation required for every action</span>
       </div>
 
       <div className="workspace-body">
@@ -341,6 +430,23 @@ export default function Workspace() {
               {s.done && <CheckCircle size={13} className="ws-rail-check" />}
             </div>
           ))}
+
+          {/* Audit Trail Drawer Toggle */}
+          {state.draftId && (
+            <div style={{ marginTop: "1.5rem", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "1rem" }}>
+              <button
+                className="button-text"
+                style={{ width: "100%", justifyContent: "space-between", fontSize: "0.82rem", display: "flex", alignItems: "center" }}
+                onClick={() => setShowAuditDrawer(!showAuditDrawer)}
+                type="button"
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                  <History size={14} /> Audit Trail ({state.auditHistory.length})
+                </span>
+                {showAuditDrawer ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            </div>
+          )}
         </aside>
 
         {/* Main panel */}
@@ -369,29 +475,52 @@ export default function Workspace() {
               <h2 className="ws-card-heading">Begin with a<br /><em>Kannada field note.</em></h2>
               <p className="ws-card-body">
                 This workspace demonstrates the administrative follow-up workflow connected to the real API.
-                The demo uses a seeded synthetic beneficiary reference (BEN-DEMO-001) and the fake STT provider.
+                Uses synthetic beneficiary fixture <code>BEN-DEMO-001</code> and the fake STT provider.
               </p>
+
               {isASHA && (
                 <button className="button-primary ws-action" onClick={startDemoFlow} disabled={state.loading} type="button" id="ws-start-demo">
                   {state.loading ? <RefreshCw size={15} className="spin" /> : <Mic size={15} />}
                   {state.loading ? "Starting…" : "Start ASHA demo flow"}
                 </button>
               )}
+
               {isANM && (
-                <p className="ws-card-body ws-anm-hint">
-                  <strong>ANM / PHC Admin:</strong> Log in as <code>asha.demo</code> first to create a draft, then return here to confirm or dismiss it.
-                </p>
+                <div style={{ marginTop: "1rem" }}>
+                  <h3 style={{ fontSize: "0.95rem", color: "var(--color-slate-200)", marginBottom: "0.5rem" }}>
+                    Area Review Queue ({areaDrafts.length} awaiting review)
+                  </h3>
+                  {areaDrafts.length === 0 ? (
+                    <p className="ws-card-body ws-anm-hint">
+                      No drafts awaiting review in your area. Log in as <code>asha.demo</code> to create and submit a draft.
+                    </p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                      {areaDrafts.map((d) => (
+                        <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem", background: "rgba(255,255,255,0.03)", borderRadius: "8px" }}>
+                          <div>
+                            <strong>{d.administrative_category?.replace(/_/g, " ")}</strong>
+                            <div style={{ fontSize: "0.8rem", color: "var(--color-slate-400)" }}>{d.summary?.slice(0, 70)}…</div>
+                          </div>
+                          <button className="button-primary" style={{ padding: "0.4rem 0.8rem", fontSize: "0.8rem" }} onClick={() => selectDraftToReview(d)} type="button">
+                            Review Draft
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
 
-          {/* ── NOTE CREATED (awaiting transcript) ───────────────────── */}
+          {/* ── NOTE CREATED ─────────────────────────────────────────── */}
           {state.step === "note_created" && (
             <div className="ws-card">
               <div className="ws-card-label"><Headphones size={14} /> Voice note submitted</div>
               <h2 className="ws-card-heading">Transcription<br /><em>in progress.</em></h2>
               <p className="ws-card-body">
-                The fake STT provider is processing the demo Kannada fixture. Polling every 3 seconds…
+                Processing the demo Kannada fixture through fake STT. Polling for transcript…
               </p>
               <div className="ws-loading-bar" aria-label="Processing" role="progressbar">
                 <div className="ws-loading-bar-inner" />
@@ -406,8 +535,7 @@ export default function Workspace() {
               <div className="ws-card-label"><FileText size={14} /> Transcript ready for review</div>
               <h2 className="ws-card-heading">Review and correct<br /><em>the transcript.</em></h2>
               <p className="ws-card-body">
-                The provider transcript is shown below. Make corrections before creating an administrative draft.
-                The original provider version is always preserved — this creates a new revision.
+                Make corrections to the STT text. Saving creates an audited worker revision from which the draft is generated.
               </p>
               <div className="ws-transcript-box">
                 <div className="ws-transcript-source">
@@ -424,9 +552,9 @@ export default function Workspace() {
                 />
               </div>
               <div className="ws-actions">
-                <button className="button-primary ws-action" onClick={() => { saveTranscriptRevision(); createDraft(); }} disabled={state.loading} type="button" id="ws-create-draft">
+                <button className="button-primary ws-action" onClick={saveAndCreateDraft} disabled={state.loading} type="button" id="ws-create-draft">
                   {state.loading ? <RefreshCw size={15} className="spin" /> : <Sparkles size={15} />}
-                  {state.loading ? "Creating draft…" : "Save & create admin draft"}
+                  {state.loading ? "Creating draft…" : "Save revision & create admin draft"}
                 </button>
               </div>
             </div>
@@ -461,12 +589,12 @@ export default function Workspace() {
 
               <div className="ws-safety-bar">
                 <ShieldCheck size={13} />
-                <span>Administrative flag only · Not a clinical assessment · ANM review required before any action</span>
+                <span>Administrative flag only · Not a clinical assessment · ANM review required</span>
               </div>
 
-              {isASHA && (
+              {isASHA && state.draft.state === "WORKER_REVIEWED" && (
                 <div className="ws-actions">
-                  <div className="ws-field">
+                  <div className="ws-field" style={{ width: "100%" }}>
                     <label htmlFor="ws-worker-note">Optional worker note (for ANM)</label>
                     <input id="ws-worker-note" type="text" value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} placeholder="Any context for the ANM reviewer" />
                   </div>
@@ -477,17 +605,64 @@ export default function Workspace() {
               )}
 
               {isANM && (
-                <div className="ws-actions ws-anm-actions">
-                  <button className="ws-confirm-btn" onClick={confirmDraft} disabled={state.loading} type="button" id="ws-confirm-draft">
-                    <CheckCircle size={15} /> Confirm &amp; create task
-                  </button>
-                  <div className="ws-field">
-                    <label htmlFor="ws-dismiss-reason">Dismissal reason (required to dismiss)</label>
-                    <input id="ws-dismiss-reason" type="text" value={dismissReason} onChange={(e) => setDismissReason(e.target.value)} placeholder="Reason for dismissal" />
+                <div className="ws-actions ws-anm-actions" style={{ flexDirection: "column", gap: "1rem", width: "100%" }}>
+                  {/* ASHA task owner selection */}
+                  <div className="ws-field" style={{ width: "100%" }}>
+                    <label htmlFor="ws-owner-select">Assign ASHA Task Owner (Required)</label>
+                    <select
+                      id="ws-owner-select"
+                      style={{ padding: "0.6rem", borderRadius: "8px", background: "#111b27", color: "#e2e8f0", border: "1px solid #1e293b", width: "100%" }}
+                      value={selectedOwnerId}
+                      onChange={(e) => setSelectedOwnerId(e.target.value)}
+                    >
+                      {assignableAshas.map((a) => (
+                        <option key={a.id} value={a.id}>{a.display_name} ({a.role})</option>
+                      ))}
+                    </select>
                   </div>
-                  <button className="ws-dismiss-btn" onClick={dismissDraft} disabled={state.loading || !dismissReason} type="button" id="ws-dismiss-draft">
-                    <XCircle size={15} /> Dismiss
-                  </button>
+
+                  <div className="ws-field" style={{ width: "100%" }}>
+                    <label htmlFor="ws-reviewer-note">Reviewer Note / Instruction</label>
+                    <input id="ws-reviewer-note" type="text" value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} placeholder="Instruction for the ASHA worker" />
+                  </div>
+
+                  {/* Actions row */}
+                  <div style={{ display: "flex", gap: "0.75rem", width: "100%", flexWrap: "wrap" }}>
+                    <button className="ws-confirm-btn" onClick={confirmDraft} disabled={state.loading || !selectedOwnerId} type="button" id="ws-confirm-draft">
+                      <CheckCircle size={15} /> Confirm &amp; create task
+                    </button>
+                    <button className="button-text" style={{ border: "1px solid rgba(255,255,255,0.15)", borderRadius: "8px", padding: "0.6rem 1rem" }} onClick={() => setIsRevising(!isRevising)} type="button">
+                      <Edit3 size={15} /> {isRevising ? "Cancel Revision" : "Revise Fields"}
+                    </button>
+                  </div>
+
+                  {/* Revision Sub-panel */}
+                  {isRevising && (
+                    <div style={{ padding: "1rem", background: "rgba(255,255,255,0.04)", borderRadius: "8px", width: "100%", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                      <div className="ws-field">
+                        <label htmlFor="ws-revised-summary">Revised Administrative Summary</label>
+                        <input id="ws-revised-summary" type="text" value={revisedSummary} onChange={(e) => setRevisedSummary(e.target.value)} />
+                      </div>
+                      <div className="ws-field">
+                        <label htmlFor="ws-revised-due">Due in (days)</label>
+                        <input id="ws-revised-due" type="number" min={1} max={30} value={revisedDueDays} onChange={(e) => setRevisedDueDays(parseInt(e.target.value, 10))} />
+                      </div>
+                      <button className="button-primary" onClick={executeRevise} disabled={state.loading || !reviewNote.trim()} type="button">
+                        Submit Revision (REVISED)
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Dismissal */}
+                  <div style={{ width: "100%", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "0.75rem" }}>
+                    <div className="ws-field">
+                      <label htmlFor="ws-dismiss-reason">Dismissal reason (required to dismiss)</label>
+                      <input id="ws-dismiss-reason" type="text" value={dismissReason} onChange={(e) => setDismissReason(e.target.value)} placeholder="Reason for dismissal" />
+                    </div>
+                    <button className="ws-dismiss-btn" onClick={dismissDraft} disabled={state.loading || !dismissReason.trim()} type="button" id="ws-dismiss-draft">
+                      <XCircle size={15} /> Dismiss
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -499,7 +674,7 @@ export default function Workspace() {
               <div className="ws-card-label"><Clock size={14} /> Awaiting ANM review</div>
               <h2 className="ws-card-heading">Draft submitted.<br /><em>Awaiting confirmation.</em></h2>
               <p className="ws-card-body">
-                The draft is now in the ANM review queue. No message has been sent. Sign in as <code>anm.demo</code> to confirm, revise, or dismiss it.
+                Draft is now in the ANM review queue (<code>AWAITING_ANM_REVIEW</code>). Sign in as <code>anm.demo</code> to confirm, revise, or dismiss.
               </p>
               <p className="ws-meta">Draft state: <strong>{state.draft?.state}</strong> · Draft ID: <code>{state.draftId?.slice(0,12)}…</code></p>
             </div>
@@ -512,15 +687,15 @@ export default function Workspace() {
               <h2 className="ws-card-heading">Follow-up task<br /><em>confirmed.</em></h2>
               <div className="ws-fact-grid">
                 <div><span>Task status</span><strong>{state.task.status}</strong></div>
+                <div><span>Assigned Owner</span><strong>{state.task.owner_user_id}</strong></div>
                 <div><span>Due</span><strong>{new Date(state.task.due_at).toLocaleDateString("en-IN")}</strong></div>
-                <div><span>Confirmed</span><strong>{new Date(state.task.confirmed_at).toLocaleString("en-IN")}</strong></div>
               </div>
               <div className="ws-safety-bar">
                 <ShieldCheck size={13} />
-                <span>No automated messages sent · Task visible to assigned owner · Human action required</span>
+                <span>No automated messages sent · Task assigned to ASHA · Human confirmation required</span>
               </div>
               <button className="button-primary ws-action" onClick={completeTask} disabled={state.loading} type="button" id="ws-complete-task">
-                <CheckCircle size={15} /> Acknowledge &amp; complete task (demo)
+                <CheckCircle size={15} /> Acknowledge &amp; complete task
               </button>
             </div>
           )}
@@ -531,15 +706,39 @@ export default function Workspace() {
               <div className="ws-card-label"><CheckCircle size={14} /> Task completed</div>
               <h2 className="ws-card-heading">Follow-up<br /><em>logged.</em></h2>
               <p className="ws-card-body">
-                The full workflow has been completed. Every step is recorded in the audit log. No automated message was sent at any point.
+                The full administrative lifecycle is complete. Every state transition is recorded in the immutable audit log.
               </p>
               <div className="ws-safety-bar ws-safety-confirmed">
                 <CheckCircle size={13} />
-                <span>Workflow complete · Audit trail created · No automated messaging</span>
+                <span>Workflow complete · Safe audit trail preserved · Zero automated messages</span>
               </div>
               <button className="button-text ws-action" onClick={reset} type="button">
                 <RefreshCw size={15} /> Run the demo flow again
               </button>
+            </div>
+          )}
+
+          {/* ── AUDIT HISTORY DRAWER ─────────────────────────────────── */}
+          {showAuditDrawer && state.auditHistory.length > 0 && (
+            <div className="ws-card" style={{ marginTop: "1.5rem", borderLeft: "3px solid var(--color-emerald-500)" }}>
+              <div className="ws-card-label"><History size={14} /> Audit Trail (Immutable &amp; Redacted)</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "0.75rem" }}>
+                {state.auditHistory.map((e) => (
+                  <div key={e.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.5rem", background: "rgba(255,255,255,0.02)", borderRadius: "6px" }}>
+                    <div>
+                      <strong style={{ color: "var(--color-slate-200)" }}>{e.event_type}</strong>
+                      {e.previous_state && e.next_state && (
+                        <span style={{ marginLeft: "0.5rem", color: "var(--color-slate-400)" }}>
+                          {e.previous_state} → {e.next_state}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ color: "var(--color-slate-500)", fontSize: "0.75rem" }}>
+                      {new Date(e.created_at).toLocaleTimeString("en-IN")}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </section>

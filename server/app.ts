@@ -25,6 +25,8 @@ import followUpDraftsRoutes from "./routes/followUpDrafts.routes.js";
 import tasksRoutes from "./routes/tasks.routes.js";
 import sopRoutes from "./routes/sop.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
+import beneficiaryRefsRoutes from "./routes/beneficiaryRefs.routes.js";
+import usersRoutes from "./routes/users.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -69,10 +71,9 @@ export function createApp() {
 
   // ── API routes ─────────────────────────────────────────────────────────────
   app.use("/api/v1/auth", authRoutes);
-  app.use("/api/v1/me", (req, res, next) => {
-    // Convenience: GET /api/v1/me handled in auth routes
-    authRoutes(req, res, next);
-  });
+  app.use("/api/v1", authRoutes); // Handles GET /api/v1/me
+  app.use("/api/v1/users", usersRoutes);
+  app.use("/api/v1/beneficiary-refs", beneficiaryRefsRoutes);
   app.use("/api/v1/voice-notes", voiceNotesRoutes);
   app.use("/api/v1/follow-up-drafts", followUpDraftsRoutes);
   app.use("/api/v1/tasks", tasksRoutes);

@@ -14,7 +14,7 @@ export function validate<T extends z.ZodTypeAny>(
   target: Target = "body"
 ) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const result = schema.safeParse(req[target]);
+    const result = schema.safeParse((req as unknown as Record<string, unknown>)[target]);
     if (!result.success) {
       res.status(422).json({
         error: "Validation failed.",
@@ -24,7 +24,7 @@ export function validate<T extends z.ZodTypeAny>(
       return;
     }
     // Replace raw input with parsed (includes defaults, coercions)
-    (req as Record<string, unknown>)[target] = result.data;
+    (req as unknown as Record<string, unknown>)[target] = result.data;
     next();
   };
 }

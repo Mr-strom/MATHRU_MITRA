@@ -9,22 +9,26 @@
  */
 
 import { getDb } from "./client.js";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DatabaseSync } from "node:sqlite";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite");
+type DatabaseSync = InstanceType<typeof DatabaseSync>;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, "migrations");
 
-function getMigrationFiles(): string[] {
+export function getMigrationFiles(): string[] {
   return fs
     .readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .sort(); // lexicographic order ensures 001 before 002
 }
 
-function getAppliedVersions(db: DatabaseSync): Set<string> {
+export function getAppliedVersions(db: DatabaseSync): Set<string> {
   try {
     const rows = db
       .prepare("SELECT version FROM schema_migrations")
@@ -36,7 +40,17 @@ function getAppliedVersions(db: DatabaseSync): Set<string> {
   }
 }
 
-function dropAllTables(db: DatabaseSync): void {
+export function checkSchemaReady(db: DatabaseSync): boolean {
+  try {
+    const applied = getAppliedVersions(db);
+    const files = getMigrationFiles();
+    return files.length > 0 && files.every((f) => applied.has(path.basename(f, ".sql")));
+  } catch {
+    return false;
+  }
+}
+
+export function dropAllTables(db: DatabaseSync): void {
   console.warn("⚠️  RESET mode: dropping all tables (dev only)");
   db.exec("PRAGMA foreign_keys = OFF");
   const tables = (
@@ -50,8 +64,8 @@ function dropAllTables(db: DatabaseSync): void {
   db.exec("PRAGMA foreign_keys = ON");
 }
 
-async function migrate() {
-  const isReset = process.argv.includes("--reset");
+export async function runMigrations(options: { reset?: boolean; silent?: boolean } = {}): Promise<number> {
+  const isReset = options.reset ?? false;
   const db = getDb();
 
   if (isReset) {
@@ -65,12 +79,12 @@ async function migrate() {
   for (const file of files) {
     const version = path.basename(file, ".sql");
     if (applied.has(version)) {
-      console.log(`  ✓ ${version} already applied`);
+      if (!options.silent) console.log(`  ✓ ${version} already applied`);
       continue;
     }
 
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8");
-    console.log(`  → Applying ${version} …`);
+    if (!options.silent) console.log(`  → Applying ${version} …`);
 
     // Run migration and record it in a savepoint (node:sqlite transaction)
     db.exec(`SAVEPOINT mig_${version.replace(/\W/g, "_")}`);
@@ -83,18 +97,24 @@ async function migrate() {
       throw err;
     }
 
-    console.log(`  ✓ ${version} applied`);
+    if (!options.silent) console.log(`  ✓ ${version} applied`);
     ran++;
   }
 
-  console.log(
-    ran > 0
-      ? `\nMigrations complete: ${ran} applied.`
-      : "\nNo new migrations to apply."
-  );
+  if (!options.silent) {
+    console.log(
+      ran > 0
+        ? `\nMigrations complete: ${ran} applied.`
+        : "\nNo new migrations to apply."
+    );
+  }
+  return ran;
 }
 
-migrate().catch((err) => {
-  console.error("Migration failed:", err);
-  process.exit(1);
-});
+// Auto-run if executed directly via CLI
+if (process.argv[1] && (process.argv[1].endsWith("migrate.ts") || process.argv[1].endsWith("migrate.js"))) {
+  runMigrations({ reset: process.argv.includes("--reset") }).catch((err) => {
+    console.error("Migration failed:", err);
+    process.exit(1);
+  });
+}

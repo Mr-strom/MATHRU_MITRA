@@ -89,7 +89,7 @@ export async function createUploadIntent(
   return { voiceNote, uploadUrl };
 }
 
-export function submitForTranscription(voiceNoteId: string, userId: string): void {
+export async function submitForTranscription(voiceNoteId: string, userId: string): Promise<void> {
   const vn = voiceNotesRepo.findById(voiceNoteId);
   if (!vn) throw new NotFoundError("Voice note not found.");
   if (vn.created_by_user_id !== userId) {
@@ -99,6 +99,16 @@ export function submitForTranscription(voiceNoteId: string, userId: string): voi
     throw new PolicyError(
       `Voice note is in status ${vn.status}. Only DRAFT notes can be submitted.`,
       "ILLEGAL_STATUS"
+    );
+  }
+
+  // Ensure audio file has actually been uploaded / attached
+  const storage = getStorageProvider();
+  const fileExists = await storage.hasObject(vn.storage_key);
+  if (!fileExists) {
+    throw new PolicyError(
+      "No audio file attached to this voice note. Upload audio before submitting.",
+      "AUDIO_NOT_ATTACHED"
     );
   }
 
@@ -127,17 +137,32 @@ export function getAuthorized(
   if (!vn) throw new NotFoundError("Voice note not found.");
 
   // ASHA can only see their own notes
-  if (userRole === "ASHA_WORKER" && vn.created_by_user_id !== userId) {
-    throw new PolicyError("Access denied.", "FORBIDDEN");
-  }
-
-  // ANM and PHC_ADMIN must be in the same area
-  if (userRole === "ANM_REVIEWER" || userRole === "PHC_ADMIN") {
-    const benRef = beneficiaryRepo.findById(vn.beneficiary_reference_id);
-    if (benRef && userAreaId && benRef.area_id !== userAreaId) {
-      throw new PolicyError("Access denied: different area.", "FORBIDDEN");
+  if (userRole === "ASHA_WORKER") {
+    if (vn.created_by_user_id !== userId) {
+      throw new PolicyError("Access denied: you can only view your own voice notes.", "FORBIDDEN");
     }
+    return vn;
   }
 
-  return vn;
+  // ANM must be in the same area as the beneficiary
+  if (userRole === "ANM_REVIEWER") {
+    const benRef = beneficiaryRepo.findById(vn.beneficiary_reference_id);
+    if (!benRef || !userAreaId || benRef.area_id !== userAreaId) {
+      throw new PolicyError("Access denied: voice note belongs to a different area.", "FORBIDDEN");
+    }
+    return vn;
+  }
+
+  // PHC_ADMIN can view if unassigned, or if assigned, within same area
+  if (userRole === "PHC_ADMIN") {
+    if (userAreaId) {
+      const benRef = beneficiaryRepo.findById(vn.beneficiary_reference_id);
+      if (!benRef || benRef.area_id !== userAreaId) {
+        throw new PolicyError("Access denied: voice note belongs to a different area.", "FORBIDDEN");
+      }
+    }
+    return vn;
+  }
+
+  throw new PolicyError("Access denied.", "FORBIDDEN");
 }

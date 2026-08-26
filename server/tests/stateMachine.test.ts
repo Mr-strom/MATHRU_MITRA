@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { transitionDraft, transitionTask } from "../services/stateMachine.js";
 import { DRAFT_TRANSITIONS, TASK_TRANSITIONS } from "@shared/states.js";
+import { PolicyError } from "../services/errors.js";
 import { seedTestUsers, testDb } from "./_setup.js";
 
 describe("State machine — draft transitions", () => {
@@ -46,7 +47,6 @@ describe("State machine — draft transitions", () => {
     const actorId = "test-asha-001";
 
     // Cannot skip states
-    const { PolicyError } = require("../services/errors.js");
     expect(() =>
       transitionDraft(entityId, "VOICE_NOTE_DRAFT", "CONFIRMED", actorId)
     ).toThrow(PolicyError);
@@ -106,7 +106,6 @@ describe("State machine — task transitions", () => {
   });
 
   it("rejects jumping TASK_OPEN → TASK_COMPLETED", () => {
-    const { PolicyError } = require("../services/errors.js");
     expect(() =>
       transitionTask("sm-test-task-03", "TASK_OPEN", "TASK_COMPLETED", "test-asha-001")
     ).toThrow(PolicyError);

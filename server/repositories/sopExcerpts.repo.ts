@@ -52,7 +52,7 @@ export function search(keywords: string, limit = 10): SopExcerptWithDoc[] {
     LIMIT ?
   `).all(like, like, like, limit) as SopExcerptRow[];
 
-  const docIds = [...new Set(rows.map((r) => r.document_id))];
+  const docIds = Array.from(new Set(rows.map((r) => r.document_id)));
   const docs = new Map(
     docIds.map((id) => {
       const d = getDb()
