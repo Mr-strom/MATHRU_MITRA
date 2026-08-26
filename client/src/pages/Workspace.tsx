@@ -20,11 +20,12 @@ import { useLocation } from "wouter";
 import {
   LogOut, ShieldCheck, Mic, FileText, CheckCircle,
   XCircle, RefreshCw, AlertTriangle, Headphones, Sparkles,
-  ChevronRight, Clock, User, Edit3, History, ChevronDown, ChevronUp
+  ChevronRight, Clock, User, Edit3, History, ChevronDown, ChevronUp,
+  Activity, RotateCcw, Check
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import {
-  voiceNotes, drafts, tasks, sop, users, beneficiaryRefs,
+  voiceNotes, drafts, tasks, sop, users, beneficiaryRefs, admin, demo,
   type DraftRecord, type TaskRecord, type TranscriptRecord,
   type SopExcerpt, type AuthUser, type AuditEvent, ApiRequestError
 } from "../lib/api";
@@ -81,6 +82,20 @@ export default function Workspace() {
   const [showAuditDrawer, setShowAuditDrawer] = useState(false);
   const [areaDrafts, setAreaDrafts] = useState<DraftRecord[]>([]);
 
+  // Readiness checklist state
+  const [readiness, setReadiness] = useState<{
+    status: string;
+    checks: {
+      api: string;
+      database_schema: string;
+      fake_providers: { stt: string; extraction: string };
+      synthetic_fixture: string;
+      messaging_safety: string;
+    };
+  } | null>(null);
+  const [showChecklist, setShowChecklist] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+
   if (!user) {
     navigate("/login");
     return null;
@@ -94,9 +109,14 @@ export default function Workspace() {
 
   const isASHA = user.role === "ASHA_WORKER";
   const isANM = user.role === "ANM_REVIEWER" || user.role === "PHC_ADMIN";
+  const isAdmin = user.role === "PHC_ADMIN";
 
-  // Load assignable ASHAs & queue for ANM
+  // Load readiness checks & ANM queue
   useEffect(() => {
+    demo.getReadiness()
+      .then((res) => setReadiness(res))
+      .catch(() => {});
+
     if (isANM) {
       users.getAssignableAshas()
         .then((res) => {
@@ -110,6 +130,29 @@ export default function Workspace() {
       drafts.list()
         .then((res) => setAreaDrafts(res.items))
         .catch(() => {});
+    }
+  }, [isANM]);
+
+  // Admin reset action
+  const handleAdminReset = useCallback(async () => {
+    if (!window.confirm("Reset all synthetic fixtures and local storage? This restores the clean demo state.")) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await admin.resetDemo();
+      setResetSuccess(res.message);
+      reset();
+      // Reload readiness
+      demo.getReadiness().then((r) => setReadiness(r)).catch(() => {});
+      if (isANM) {
+        drafts.list().then((d) => setAreaDrafts(d.items)).catch(() => {});
+      }
+    } catch (err) {
+      if (err instanceof ApiRequestError) setError(err.body.error);
+      else setError("Failed to reset demo environment.");
+    } finally {
+      setLoading(false);
     }
   }, [isANM]);
 
@@ -431,12 +474,37 @@ export default function Workspace() {
             </div>
           ))}
 
+          {/* Demo Readiness Checklist */}
+          <div style={{ marginTop: "1.5rem", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "1rem" }}>
+            <button
+              className="button-text"
+              style={{ width: "100%", justifyContent: "space-between", fontSize: "0.82rem", display: "flex", alignItems: "center", padding: "0.2rem 0" }}
+              onClick={() => setShowChecklist(!showChecklist)}
+              type="button"
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <Activity size={14} /> Demo Checklist ({readiness?.status === "ready" ? "🟢 Ready" : "🟡 Checking"})
+              </span>
+              {showChecklist ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+
+            {showChecklist && readiness && (
+              <div style={{ fontSize: "0.75rem", background: "rgba(255,255,255,0.03)", borderRadius: "6px", padding: "0.6rem", marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                <div>✓ API: <span style={{ color: "var(--color-emerald-400)" }}>{readiness.checks.api}</span></div>
+                <div>✓ Schema: <span style={{ color: "var(--color-emerald-400)" }}>{readiness.checks.database_schema}</span></div>
+                <div>✓ Fake Providers: <span style={{ color: "var(--color-emerald-400)" }}>active</span></div>
+                <div>✓ Demo Fixture: <span style={{ color: "var(--color-emerald-400)" }}>{readiness.checks.synthetic_fixture}</span></div>
+                <div>🔒 Outbox: <span style={{ color: "var(--color-amber-400)" }}>DISABLED (Safety Lock)</span></div>
+              </div>
+            )}
+          </div>
+
           {/* Audit Trail Drawer Toggle */}
           {state.draftId && (
-            <div style={{ marginTop: "1.5rem", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "1rem" }}>
+            <div style={{ marginTop: "1rem", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "1rem" }}>
               <button
                 className="button-text"
-                style={{ width: "100%", justifyContent: "space-between", fontSize: "0.82rem", display: "flex", alignItems: "center" }}
+                style={{ width: "100%", justifyContent: "space-between", fontSize: "0.82rem", display: "flex", alignItems: "center", padding: "0.2rem 0" }}
                 onClick={() => setShowAuditDrawer(!showAuditDrawer)}
                 type="button"
               >
@@ -447,10 +515,33 @@ export default function Workspace() {
               </button>
             </div>
           )}
+
+          {/* Admin Reset Button */}
+          {isAdmin && (
+            <div style={{ marginTop: "1.5rem", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "1rem" }}>
+              <button
+                className="button-text"
+                style={{ width: "100%", fontSize: "0.8rem", color: "var(--color-amber-400)", border: "1px solid rgba(251, 191, 36, 0.3)", borderRadius: "6px", padding: "0.5rem", justifyContent: "center", display: "flex", alignItems: "center", gap: "0.4rem" }}
+                onClick={handleAdminReset}
+                type="button"
+                id="ws-admin-reset"
+              >
+                <RotateCcw size={13} /> Reset Demo Data &amp; Storage
+              </button>
+            </div>
+          )}
         </aside>
 
         {/* Main panel */}
         <section className="ws-main" aria-label="Active workflow panel">
+
+          {/* Reset Success Notice */}
+          {resetSuccess && (
+            <div className="ws-alert ws-alert-notice" role="status" style={{ borderLeftColor: "var(--color-emerald-400)" }}>
+              <Check size={14} />
+              <span>{resetSuccess}</span>
+            </div>
+          )}
 
           {/* Error */}
           {state.error && (

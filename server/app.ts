@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { apiRateLimit } from "./middleware/rateLimit.middleware.js";
 import { errorHandler } from "./middleware/errorHandler.middleware.js";
+import { requestIdMiddleware, requestLogger } from "./middleware/logger.middleware.js";
 
 import authRoutes from "./routes/auth.routes.js";
 import voiceNotesRoutes from "./routes/voiceNotes.routes.js";
@@ -27,6 +28,8 @@ import sopRoutes from "./routes/sop.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
 import beneficiaryRefsRoutes from "./routes/beneficiaryRefs.routes.js";
 import usersRoutes from "./routes/users.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
+import demoRoutes from "./routes/demo.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -37,6 +40,10 @@ const CORS_ORIGINS = (process.env.CORS_ORIGIN ?? "http://localhost:3000,http://l
 
 export function createApp() {
   const app = express();
+
+  // ── Request ID & structured tracing (applied first) ─────────────────────────
+  app.use(requestIdMiddleware);
+  app.use(requestLogger);
 
   // ── Security headers ────────────────────────────────────────────────────────
   app.use(
@@ -79,6 +86,8 @@ export function createApp() {
   app.use("/api/v1/tasks", tasksRoutes);
   app.use("/api/v1/sop-excerpts", sopRoutes);
   app.use("/api/v1/audit-events", auditRoutes);
+  app.use("/api/v1/admin", adminRoutes);
+  app.use("/api/v1/demo", demoRoutes);
 
   // ── Health check ───────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {

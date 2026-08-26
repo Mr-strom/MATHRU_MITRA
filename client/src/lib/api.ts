@@ -258,6 +258,31 @@ export interface SopExcerpt {
   citation_note: string;
 }
 
+// ── Admin ─────────────────────────────────────────────────────────────────────
+export const admin = {
+  resetDemo: () =>
+    request<{ success: boolean; message: string; notice: string; reset_at: string }>(
+      "POST",
+      "/admin/demo-reset"
+    ),
+};
+
+// ── Demo readiness diagnostics ────────────────────────────────────────────────
+export const demo = {
+  getReadiness: () =>
+    request<{
+      status: string;
+      checks: {
+        api: string;
+        database_schema: string;
+        fake_providers: { stt: string; extraction: string };
+        synthetic_fixture: string;
+        messaging_safety: string;
+      };
+      notice: string;
+    }>("GET", "/demo/readiness"),
+};
+
 // ── Audit events ──────────────────────────────────────────────────────
 export interface AuditEvent {
   id: string;

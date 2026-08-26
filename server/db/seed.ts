@@ -16,38 +16,37 @@ import { getDb, withTransaction } from "./client.js";
 import bcrypt from "bcryptjs";
 import { nanoid } from "nanoid";
 
-const db = getDb();
-
 // ── Demo credentials (displayed in local setup guide) ────────────────────────
-const DEMO_USERS = [
+export const DEMO_USERS = [
   {
-    id: nanoid(),
+    id: "demo-asha-001",
     username: "asha.demo",
     display_name: "Asha Lakshmi (Demo Worker)",
-    role: "ASHA_WORKER",
+    role: "ASHA_WORKER" as const,
     password: "AshaDemoPass123!",
   },
   {
-    id: nanoid(),
+    id: "demo-anm-001",
     username: "anm.demo",
     display_name: "ANM Priya Rao (Demo Reviewer)",
-    role: "ANM_REVIEWER",
+    role: "ANM_REVIEWER" as const,
     password: "AnmDemoPass123!",
   },
   {
-    id: nanoid(),
+    id: "demo-admin-001",
     username: "admin.demo",
     display_name: "PHC Admin Ramesh (Demo Admin)",
-    role: "PHC_ADMIN",
+    role: "PHC_ADMIN" as const,
     password: "AdminDemoPass123!",
   },
 ] as const;
 
-async function seed() {
-  console.log("Seeding development database with synthetic demo data…\n");
+export async function seed(options: { silent?: boolean } = {}) {
+  const db = getDb();
+  if (!options.silent) console.log("Seeding development database with synthetic demo data…\n");
 
   // ── 1. Area ──────────────────────────────────────────────────────────────
-  const areaId = nanoid();
+  const areaId = "demo-area-001";
 
   // ── 2. Users ─────────────────────────────────────────────────────────────
   const hashedUsers = await Promise.all(
@@ -59,17 +58,17 @@ async function seed() {
   );
 
   // ── 3. Beneficiary reference ─────────────────────────────────────────────
-  const benRefId = nanoid();
+  const benRefId = "demo-ben-001";
   const dataRetentionUntil = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
   const consentCapturedAt = new Date().toISOString();
 
   // ── 4. SOP document ──────────────────────────────────────────────────────
-  const sopDocId = nanoid();
+  const sopDocId = "demo-sop-doc-001";
   const adminUser = hashedUsers.find((u) => u.role === "PHC_ADMIN")!;
 
   // ── 5. SOP excerpts ───────────────────────────────────────────────────────
-  const excerpt1Id = nanoid();
-  const excerpt2Id = nanoid();
+  const excerpt1Id = "demo-sop-exc-001";
+  const excerpt2Id = "demo-sop-exc-002";
 
   withTransaction(() => {
     // Clear existing seed data to allow safe re-runs
@@ -77,14 +76,14 @@ async function seed() {
     db.prepare("DELETE FROM sop_documents WHERE version LIKE '%-demo%'").run();
     db.prepare("DELETE FROM beneficiary_references WHERE external_reference_alias LIKE 'BEN-DEMO-%'").run();
     db.prepare("DELETE FROM users WHERE username LIKE '%.demo'").run();
-    db.prepare("DELETE FROM areas WHERE ward_village_label = ? AND district = ?").run("Ward 03", "Chitradurga");
+    db.prepare("DELETE FROM areas WHERE id = 'demo-area-001' OR (ward_village_label = ? AND district = ?)").run("Ward 03", "Chitradurga");
 
     // Insert area
     db.prepare(`
       INSERT INTO areas (id, district, taluk, phc_name, ward_village_label, active)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(areaId, "Chitradurga", "Hiriyur", "PHC Malladihalli", "Ward 03", 1);
-    console.log(`  ✓ Area: Ward 03, Chitradurga`);
+    if (!options.silent) console.log(`  ✓ Area: Ward 03, Chitradurga`);
 
     // Insert users
     const insertUser = db.prepare(`
@@ -93,7 +92,7 @@ async function seed() {
     `);
     for (const u of hashedUsers) {
       insertUser.run(u.id, u.username, u.display_name, u.role, u.assigned_area_id, u.password_hash);
-      console.log(`  ✓ User: ${u.username} (${u.role})`);
+      if (!options.silent) console.log(`  ✓ User: ${u.username} (${u.role})`);
     }
 
     // Insert beneficiary reference
@@ -102,7 +101,7 @@ async function seed() {
         (id, external_reference_alias, area_id, consent_status, consent_captured_at, data_retention_until)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(benRefId, "BEN-DEMO-001", areaId, "GIVEN", consentCapturedAt, dataRetentionUntil);
-    console.log(`  ✓ Beneficiary reference: BEN-DEMO-001`);
+    if (!options.silent) console.log(`  ✓ Beneficiary reference: BEN-DEMO-001`);
 
     // Insert SOP document
     db.prepare(`
@@ -121,7 +120,7 @@ async function seed() {
       adminUser.id,
       "2024-04-01T00:00:00.000Z"
     );
-    console.log(`  ✓ SOP document: Karnataka RMNCH+A Operational Guidelines — ASHA Field Follow-Up`);
+    if (!options.silent) console.log(`  ✓ SOP document: Karnataka RMNCH+A Operational Guidelines — ASHA Field Follow-Up`);
 
     // Insert SOP excerpt 1
     db.prepare(`
@@ -135,7 +134,7 @@ async function seed() {
       JSON.stringify(["ifa", "supplement", "home-visit", "routine"]),
       1
     );
-    console.log("  ✓ SOP excerpt: Section 4.2 — IFA Supplement Routine…");
+    if (!options.silent) console.log("  ✓ SOP excerpt: Section 4.2 — IFA Supplement Routine…");
 
     // Insert SOP excerpt 2
     db.prepare(`
@@ -149,20 +148,25 @@ async function seed() {
       JSON.stringify(["missed-visit", "home-visit", "outreach"]),
       1
     );
-    console.log("  ✓ SOP excerpt: Section 2.1 — Missed Home Visit Follow-Up…");
+    if (!options.silent) console.log("  ✓ SOP excerpt: Section 2.1 — Missed Home Visit Follow-Up…");
   });
 
-  console.log("\n─────────────────────────────────────────");
-  console.log("Demo credentials (development only):");
-  console.log("─────────────────────────────────────────");
-  for (const u of DEMO_USERS) {
-    console.log(`  ${u.role.padEnd(16)} ${u.username} / ${u.password}`);
+  if (!options.silent) {
+    console.log("\n─────────────────────────────────────────");
+    console.log("Demo credentials (development only):");
+    console.log("─────────────────────────────────────────");
+    for (const u of DEMO_USERS) {
+      console.log(`  ${u.role.padEnd(16)} ${u.username} / ${u.password}`);
+    }
+    console.log("─────────────────────────────────────────");
+    console.log("\nSeed complete. These are fictional identities for demonstration purposes.");
   }
-  console.log("─────────────────────────────────────────");
-  console.log("\nSeed complete. These are fictional identities for demonstration purposes.");
 }
 
-seed().catch((err) => {
-  console.error("Seed failed:", err);
-  process.exit(1);
-});
+// Auto-run if executed directly via CLI
+if (process.argv[1] && (process.argv[1].endsWith("seed.ts") || process.argv[1].endsWith("seed.js"))) {
+  seed().catch((err) => {
+    console.error("Seed failed:", err);
+    process.exit(1);
+  });
+}
