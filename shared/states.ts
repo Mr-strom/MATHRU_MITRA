@@ -96,3 +96,16 @@ export type FollowUpCategory =
 export const NOTIFICATION_STATUS = {
   DISABLED: "DISABLED",
 } as const;
+
+// ── Offline sync states ───────────────────────────────────────────────────────
+
+export const SYNC_STATES = {
+  LOCAL_DRAFT: "LOCAL_DRAFT",
+  WAITING_TO_SYNC: "WAITING_TO_SYNC",
+  SYNCING: "SYNCING",
+  SYNCED: "SYNCED",
+  SYNC_FAILED: "SYNC_FAILED",
+  CONFLICT_REVIEW_REQUIRED: "CONFLICT_REVIEW_REQUIRED",
+} as const;
+
+export type SyncState = (typeof SYNC_STATES)[keyof typeof SYNC_STATES];

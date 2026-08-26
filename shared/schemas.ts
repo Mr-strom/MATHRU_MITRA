@@ -284,3 +284,26 @@ export const ApiErrorSchema = z.object({
   details: z.unknown().optional(),
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;
+
+// ── Offline sync action contracts ─────────────────────────────────────────────
+
+export const SyncActionRequestSchema = z.object({
+  action_id: z.string(),
+  idempotency_key: z.string(),
+  entity_type: z.enum(["VOICE_NOTE", "TRANSCRIPT_REVISION", "FOLLOW_UP_DRAFT", "TASK"]),
+  entity_id: z.string(),
+  action_type: z.string(),
+  base_server_version: z.number().nullable().optional(),
+  payload: z.record(z.string(), z.unknown()),
+  created_at: z.string(),
+});
+export type SyncActionRequest = z.infer<typeof SyncActionRequestSchema>;
+
+export const SyncActionResponseSchema = z.object({
+  action_id: z.string(),
+  result: z.enum(["APPLIED", "ALREADY_APPLIED", "CONFLICT", "REJECTED"]),
+  authoritative_entity: z.record(z.string(), z.unknown()).nullable(),
+  audit_event_id: z.string().nullable(),
+  conflict_code: z.string().nullable(),
+});
+export type SyncActionResponse = z.infer<typeof SyncActionResponseSchema>;

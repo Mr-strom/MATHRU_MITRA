@@ -30,6 +30,7 @@ import beneficiaryRefsRoutes from "./routes/beneficiaryRefs.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import demoRoutes from "./routes/demo.routes.js";
+import syncRoutes from "./routes/sync.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -88,6 +89,7 @@ export function createApp() {
   app.use("/api/v1/audit-events", auditRoutes);
   app.use("/api/v1/admin", adminRoutes);
   app.use("/api/v1/demo", demoRoutes);
+  app.use("/api/v1/sync", syncRoutes);
 
   // ── Health check ───────────────────────────────────────────────────────────
   app.get("/api/health", (_req, res) => {

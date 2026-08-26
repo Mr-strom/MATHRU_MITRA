@@ -24,11 +24,22 @@ import {
   Activity, RotateCcw, Check
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import {
-  voiceNotes, drafts, tasks, sop, users, beneficiaryRefs, admin, demo,
+  voiceNotes, drafts, tasks, sop, users, beneficiaryRefs, admin, demo, sync,
   type DraftRecord, type TaskRecord, type TranscriptRecord,
   type SopExcerpt, type AuthUser, type AuditEvent, ApiRequestError
 } from "../lib/api";
+import {
+  getAllQueuedActions,
+  queueAction,
+  retryAction,
+  discardLocalDraft,
+  clearSyncedActions,
+  processOfflineQueue,
+  type QueuedAction,
+} from "../lib/offlineQueue";
+import { OfflineQueuePanel } from "../components/OfflineQueuePanel";
 
 const logoImage = "/manus-storage/maatrumitra-care-orbit-logo_1689796a.png";
 
@@ -53,6 +64,8 @@ interface WorkspaceState {
 export default function Workspace() {
   const { user, logout } = useAuth();
   const [, navigate] = useLocation();
+  const { isOnline, isSimulatedOffline, effectiveOnline, toggleSimulatedOffline } = useNetworkStatus();
+
   const [state, setState] = useState<WorkspaceState>({
     step: "idle",
     voiceNoteId: null,
@@ -72,6 +85,10 @@ export default function Workspace() {
   const [editedTranscript, setEditedTranscript] = useState("");
   const [reviewNote, setReviewNote] = useState("");
   const [dismissReason, setDismissReason] = useState("");
+
+  // Offline queue state
+  const [queuedActions, setQueuedActions] = useState<QueuedAction[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // ANM state
   const [assignableAshas, setAssignableAshas] = useState<AuthUser[]>([]);
@@ -111,8 +128,15 @@ export default function Workspace() {
   const isANM = user.role === "ANM_REVIEWER" || user.role === "PHC_ADMIN";
   const isAdmin = user.role === "PHC_ADMIN";
 
-  // Load readiness checks & ANM queue
+  const refreshQueue = useCallback(async () => {
+    const items = await getAllQueuedActions();
+    setQueuedActions(items);
+  }, []);
+
+  // Load readiness checks, queue & ANM queue
   useEffect(() => {
+    refreshQueue();
+
     demo.getReadiness()
       .then((res) => setReadiness(res))
       .catch(() => {});
@@ -131,7 +155,65 @@ export default function Workspace() {
         .then((res) => setAreaDrafts(res.items))
         .catch(() => {});
     }
-  }, [isANM]);
+  }, [isANM, refreshQueue]);
+
+  // Sync processor
+  const handleSyncQueue = useCallback(async () => {
+    if (isSyncing || !effectiveOnline) return;
+    setIsSyncing(true);
+    try {
+      const summary = await processOfflineQueue(async (action) => {
+        return await sync.applyAction({
+          action_id: action.action_id,
+          idempotency_key: action.idempotency_key,
+          entity_type: action.entity_type,
+          entity_id: action.entity_id,
+          action_type: action.action_type,
+          base_server_version: action.base_server_version,
+          payload: action.payload,
+          created_at: action.created_at,
+        });
+      });
+
+      await refreshQueue();
+
+      if (summary.conflictCount > 0) {
+        setState((s) => ({
+          ...s,
+          notice: `Sync completed with ${summary.conflictCount} conflict(s). Review required in offline queue panel.`,
+        }));
+      } else if (summary.syncedCount > 0) {
+        setState((s) => ({
+          ...s,
+          notice: `Successfully synced ${summary.syncedCount} queued action(s) to server.`,
+        }));
+      }
+    } catch {
+      setError("Failed to synchronize offline queue.");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSyncing, effectiveOnline, refreshQueue]);
+
+  const handleRetryAction = useCallback(async (actionId: string) => {
+    await retryAction(actionId);
+    await refreshQueue();
+    handleSyncQueue();
+  }, [refreshQueue, handleSyncQueue]);
+
+  const handleDiscardDraft = useCallback(async (actionId: string) => {
+    try {
+      await discardLocalDraft(actionId);
+      await refreshQueue();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Cannot discard draft.");
+    }
+  }, [refreshQueue]);
+
+  const handleClearSynced = useCallback(async () => {
+    await clearSyncedActions();
+    await refreshQueue();
+  }, [refreshQueue]);
 
   // Admin reset action
   const handleAdminReset = useCallback(async () => {
@@ -143,6 +225,8 @@ export default function Workspace() {
       const res = await admin.resetDemo();
       setResetSuccess(res.message);
       reset();
+      await clearSyncedActions();
+      await refreshQueue();
       // Reload readiness
       demo.getReadiness().then((r) => setReadiness(r)).catch(() => {});
       if (isANM) {
@@ -154,7 +238,7 @@ export default function Workspace() {
     } finally {
       setLoading(false);
     }
-  }, [isANM]);
+  }, [isANM, refreshQueue]);
 
   // Load audit history when draft is created or updated
   const refreshAuditHistory = useCallback(async (draftId: string) => {
@@ -168,6 +252,49 @@ export default function Workspace() {
 
   const startDemoFlow = useCallback(async () => {
     setLoading(true);
+
+    // If offline (simulated or physical), create local draft queue item
+    if (!effectiveOnline) {
+      const localVnId = `vn_local_${Date.now()}`;
+      const localTxId = `tx_local_${Date.now()}`;
+      const defaultText = "ಗರ್ಭಿಣಿ ತಪಾಸಣೆ ವೇಳೆ ಐರನ್ ಮಾತ್ರೆ ಸೇವನೆ ನಿಲ್ಲಿಸಿರುವುದು ಕಂಡುಬಂದಿದೆ. ಮನೆ ಭೇಟಿ ಮಾಡಿ ಮಾಹಿತಿ ನೀಡಬೇಕು.";
+
+      await queueAction({
+        entity_type: "VOICE_NOTE",
+        entity_id: localVnId,
+        action_type: "CREATE_INTENT",
+        payload: {
+          beneficiary_reference_id: "demo-ben-001",
+          consent_given: true,
+          language_declared: "kn",
+          byte_size: 1024,
+        },
+        sync_state: "LOCAL_DRAFT",
+      });
+
+      await refreshQueue();
+      setEditedTranscript(defaultText);
+
+      setState((s) => ({
+        ...s,
+        step: "transcript_ready",
+        voiceNoteId: localVnId,
+        transcriptId: localTxId,
+        transcript: {
+          id: localTxId,
+          source: "PROVIDER",
+          language: "kn",
+          text: defaultText,
+          confidence_summary: "0.91",
+          provider_name: "fake-kannada-stt (offline cached)",
+          created_at: new Date().toISOString(),
+        },
+        notice: "Offline simulation: Field note recorded locally (LOCAL_DRAFT). You can review, edit, and queue offline.",
+        loading: false,
+      }));
+      return;
+    }
+
     try {
       // 1. Fetch synthetic fixture BEN-DEMO-001
       const benRef = await beneficiaryRefs.getDemo();
@@ -205,7 +332,7 @@ export default function Workspace() {
         setError("Failed to start demo flow. Is the server running?");
       }
     }
-  }, []);
+  }, [effectiveOnline, refreshQueue]);
 
   const pollForTranscript = useCallback(async (vnId: string) => {
     let attempts = 0;
@@ -242,6 +369,63 @@ export default function Workspace() {
   const saveAndCreateDraft = useCallback(async () => {
     if (!state.voiceNoteId) return;
     setLoading(true);
+
+    if (!effectiveOnline) {
+      const localDraftId = `draft_local_${Date.now()}`;
+      const localTxId = state.transcriptId ?? `tx_local_${Date.now()}`;
+
+      // Enqueue revision & draft actions
+      await queueAction({
+        entity_type: "TRANSCRIPT_REVISION",
+        entity_id: localTxId,
+        action_type: "SAVE_WORKER_EDIT",
+        payload: { voice_note_id: state.voiceNoteId, text: editedTranscript, language: "kn" },
+        sync_state: "WAITING_TO_SYNC",
+      });
+
+      await queueAction({
+        entity_type: "FOLLOW_UP_DRAFT",
+        entity_id: localDraftId,
+        action_type: "CREATE_FROM_TRANSCRIPT",
+        payload: { transcript_id: localTxId },
+        sync_state: "WAITING_TO_SYNC",
+      });
+
+      await queueAction({
+        entity_type: "FOLLOW_UP_DRAFT",
+        entity_id: localDraftId,
+        action_type: "MARK_WORKER_REVIEWED",
+        payload: {},
+        sync_state: "WAITING_TO_SYNC",
+      });
+
+      await refreshQueue();
+
+      const localDraft: DraftRecord = {
+        id: localDraftId,
+        voice_note_id: state.voiceNoteId,
+        transcript_id: localTxId,
+        state: "WORKER_REVIEWED",
+        administrative_category: "IFA_SUPPLEMENT_FOLLOW_UP",
+        summary: "ಗರ್ಭಿಣಿ ಐರನ್ ಮಾತ್ರೆ ಸೇವನೆ ನಿಲ್ಲಿಸಿರುವ ಬಗ್ಗೆ ಪರಿಶೀಲನೆ ಹಾಗೂ ಮನೆ ಭೇಟಿ (ಸ್ಥಳೀಯ ದಾಖಲೆ)",
+        proposed_owner_user_id: user?.id ?? null,
+        proposed_due_at: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+        citation_id: "demo-sop-exc-001",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      setState((s) => ({
+        ...s,
+        step: "draft_ready",
+        draftId: localDraftId,
+        draft: localDraft,
+        notice: "Worker revision saved locally (WAITING_TO_SYNC). Ready for ANM review once synchronized.",
+        loading: false,
+      }));
+      return;
+    }
+
     try {
       // 1. Save worker edited revision
       const revRes = await voiceNotes.addTranscriptRevision(
@@ -279,11 +463,32 @@ export default function Workspace() {
       if (err instanceof ApiRequestError) setError(err.body.error);
       else setError("Failed to create administrative draft.");
     }
-  }, [state.voiceNoteId, editedTranscript, refreshAuditHistory]);
+  }, [state.voiceNoteId, state.transcriptId, editedTranscript, effectiveOnline, user?.id, refreshQueue, refreshAuditHistory]);
 
   const submitForReview = useCallback(async () => {
     if (!state.draftId) return;
     setLoading(true);
+
+    if (!effectiveOnline) {
+      await queueAction({
+        entity_type: "FOLLOW_UP_DRAFT",
+        entity_id: state.draftId,
+        action_type: "SUBMIT_TO_ANM",
+        payload: { worker_note: reviewNote },
+        sync_state: "WAITING_TO_SYNC",
+      });
+
+      await refreshQueue();
+
+      setState((s) => ({
+        ...s,
+        step: "submitted",
+        notice: "Draft submission queued (WAITING_TO_SYNC). It will appear in ANM queue after sync.",
+        loading: false,
+      }));
+      return;
+    }
+
     try {
       const result = await drafts.submitForReview(state.draftId, reviewNote || undefined);
       setState((s) => ({
@@ -298,7 +503,7 @@ export default function Workspace() {
       if (err instanceof ApiRequestError) setError(err.body.error);
       else setError("Failed to submit for review.");
     }
-  }, [state.draftId, reviewNote, refreshAuditHistory]);
+  }, [state.draftId, reviewNote, effectiveOnline, refreshQueue, refreshAuditHistory]);
 
   // ── ANM ACTIONS ───────────────────────────────────────────────────────────
 
@@ -534,6 +739,19 @@ export default function Workspace() {
 
         {/* Main panel */}
         <section className="ws-main" aria-label="Active workflow panel">
+
+          {/* Offline Queue & Network Status Panel */}
+          <OfflineQueuePanel
+            effectiveOnline={effectiveOnline}
+            isSimulatedOffline={isSimulatedOffline}
+            toggleSimulatedOffline={toggleSimulatedOffline}
+            queuedActions={queuedActions}
+            isSyncing={isSyncing}
+            onSyncNow={handleSyncQueue}
+            onRetryAction={handleRetryAction}
+            onDiscardDraft={handleDiscardDraft}
+            onClearSynced={handleClearSynced}
+          />
 
           {/* Reset Success Notice */}
           {resetSuccess && (

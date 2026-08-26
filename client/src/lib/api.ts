@@ -283,6 +283,27 @@ export const demo = {
     }>("GET", "/demo/readiness"),
 };
 
+// ── Offline Sync ─────────────────────────────────────────────────────────────
+export const sync = {
+  applyAction: (action: {
+    action_id: string;
+    idempotency_key: string;
+    entity_type: "VOICE_NOTE" | "TRANSCRIPT_REVISION" | "FOLLOW_UP_DRAFT" | "TASK";
+    entity_id: string;
+    action_type: string;
+    base_server_version?: number | null;
+    payload: Record<string, unknown>;
+    created_at: string;
+  }) =>
+    request<{
+      action_id: string;
+      result: "APPLIED" | "ALREADY_APPLIED" | "CONFLICT" | "REJECTED";
+      authoritative_entity: Record<string, unknown> | null;
+      audit_event_id: string | null;
+      conflict_code: string | null;
+    }>("POST", "/sync/actions", action),
+};
+
 // ── Audit events ──────────────────────────────────────────────────────
 export interface AuditEvent {
   id: string;
