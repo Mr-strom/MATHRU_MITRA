@@ -82,6 +82,7 @@ export const VoiceNoteSchema = z.object({
   duration_seconds: z.number().nullable(),
   language_declared: z.string(),
   status: z.string(),
+  server_version: z.number().default(1),
   created_at: z.string(),
 });
 export type VoiceNote = z.infer<typeof VoiceNoteSchema>;
@@ -198,6 +199,7 @@ export const FollowUpDraftSchema = z.object({
   proposed_due_at: z.string().nullable(),
   extraction_confidence: z.string().nullable(),
   citation_id: z.string().nullable(),
+  server_version: z.number().default(1),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -224,6 +226,7 @@ export const TaskSchema = z.object({
   reviewer_note: z.string().nullable(),
   confirmed_at: z.string(),
   completed_at: z.string().nullable(),
+  server_version: z.number().default(1),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -307,3 +310,27 @@ export const SyncActionResponseSchema = z.object({
   conflict_code: z.string().nullable(),
 });
 export type SyncActionResponse = z.infer<typeof SyncActionResponseSchema>;
+
+// ── Conflict resolution contracts ─────────────────────────────────────────────
+
+export const ConflictResolutionRequestSchema = z.object({
+  entity_type: z.enum(["VOICE_NOTE", "FOLLOW_UP_DRAFT", "TASK"]),
+  entity_id: z.string(),
+  base_server_version: z.number(),
+  resolution_strategy: z.enum(["KEEP_SERVER", "KEEP_LOCAL", "MANUAL_MERGE"]),
+  resolved_fields: z.record(z.string(), z.unknown()).optional(),
+  resolution_reason: z.string().min(1).max(1000),
+  local_snapshot: z.record(z.string(), z.unknown()),
+});
+export type ConflictResolutionRequest = z.infer<typeof ConflictResolutionRequestSchema>;
+
+export const ConflictResolutionResponseSchema = z.object({
+  success: z.boolean(),
+  entity_type: z.string(),
+  entity_id: z.string(),
+  new_server_version: z.number(),
+  authoritative_entity: z.record(z.string(), z.unknown()),
+  audit_event_id: z.string(),
+});
+export type ConflictResolutionResponse = z.infer<typeof ConflictResolutionResponseSchema>;
+

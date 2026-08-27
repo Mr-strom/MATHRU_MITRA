@@ -17,6 +17,7 @@ export interface TaskRow {
   confirmed_at: string;
   completed_at: string | null;
   completion_note: string | null;
+  server_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -36,8 +37,8 @@ export function create(input: CreateTaskInput): TaskRow {
   getDb().prepare(`
     INSERT INTO follow_up_tasks
       (id, draft_id, status, owner_user_id, due_at, reviewer_user_id,
-       reviewer_note, confirmed_at, created_at, updated_at)
-    VALUES (?, ?, 'TASK_OPEN', ?, ?, ?, ?, ?, ?, ?)
+       reviewer_note, confirmed_at, server_version, created_at, updated_at)
+    VALUES (?, ?, 'TASK_OPEN', ?, ?, ?, ?, ?, 1, ?, ?)
   `).run(
     id, input.draft_id, input.owner_user_id, input.due_at, input.reviewer_user_id,
     input.reviewer_note ?? null, input.confirmed_at, now, now
@@ -93,7 +94,7 @@ export function updateStatus(
   const now = new Date().toISOString();
   getDb().prepare(`
     UPDATE follow_up_tasks
-    SET status = ?, completed_at = ?, completion_note = ?, updated_at = ?
+    SET status = ?, completed_at = ?, completion_note = ?, server_version = server_version + 1, updated_at = ?
     WHERE id = ?
   `).run(
     status,
@@ -102,4 +103,19 @@ export function updateStatus(
     now,
     id,
   );
+}
+
+export function updateFields(
+  id: string,
+  fields: Partial<Pick<TaskRow, "owner_user_id" | "due_at" | "reviewer_note">>
+): void {
+  const now = new Date().toISOString();
+  const allowed = ["owner_user_id", "due_at", "reviewer_note"] as const;
+  const sets = allowed.filter((k) => k in fields).map((k) => `${k} = ?`).join(", ");
+  const values = allowed.filter((k) => k in fields).map((k) => fields[k] ?? null);
+  if (sets.length > 0) {
+    getDb().prepare(
+      `UPDATE follow_up_tasks SET server_version = server_version + 1, updated_at = ?, ${sets} WHERE id = ?`
+    ).run(now, ...values, id);
+  }
 }

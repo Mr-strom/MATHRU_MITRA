@@ -7,7 +7,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.middleware.js";
 import { validate } from "../middleware/validate.middleware.js";
-import { SyncActionRequestSchema } from "@shared/schemas.js";
+import { SyncActionRequestSchema, ConflictResolutionRequestSchema } from "@shared/schemas.js";
 import * as syncService from "../services/sync.service.js";
 
 const router = Router();
@@ -20,6 +20,21 @@ router.post(
   async (req, res, next) => {
     try {
       const response = await syncService.applySyncAction(req.body, req.user!);
+      res.json(response);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/v1/sync/conflicts/resolve — Authoritatively resolve a sync conflict
+router.post(
+  "/conflicts/resolve",
+  requireAuth,
+  validate(ConflictResolutionRequestSchema, "body"),
+  async (req, res, next) => {
+    try {
+      const response = await syncService.resolveConflict(req.body, req.user!);
       res.json(response);
     } catch (err) {
       next(err);

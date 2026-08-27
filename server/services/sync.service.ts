@@ -22,8 +22,14 @@ import * as auditEventsRepo from "../repositories/auditEvents.repo.js";
 import * as reviewWorkflow from "./reviewWorkflow.service.js";
 import { runExtraction } from "./extraction.service.js";
 import { getStorageProvider } from "../providers/storage/index.js";
+import { NotFoundError, ForbiddenError, PolicyError } from "./errors.js";
 import type { SafeUser } from "../repositories/users.repo.js";
-import type { SyncActionRequest, SyncActionResponse } from "@shared/schemas.js";
+import type {
+  SyncActionRequest,
+  SyncActionResponse,
+  ConflictResolutionRequest,
+  ConflictResolutionResponse,
+} from "@shared/schemas.js";
 
 export async function applySyncAction(
   action: SyncActionRequest,
@@ -112,7 +118,7 @@ async function executeAction(
   auditEventId: string | null;
   conflictCode: string | null;
 }> {
-  const { entity_type, action_type, payload } = action;
+  const { entity_type, action_type, payload, base_server_version } = action;
 
   // ── VOICE NOTE ACTIONS ───────────────────────────────────────────────────────
   if (entity_type === "VOICE_NOTE") {
@@ -158,11 +164,23 @@ async function executeAction(
         provider_name: "fake-kannada-stt",
       });
 
+      const reloadedVn = voiceNotesRepo.findById(vn.id)!;
       return {
         result: "APPLIED",
-        authoritativeEntity: { voice_note: vn, transcript: tx } as unknown as Record<string, unknown>,
+        authoritativeEntity: { voice_note: reloadedVn, transcript: tx } as unknown as Record<string, unknown>,
         auditEventId: null,
         conflictCode: null,
+      };
+    }
+
+    // Existing voice note optimistic concurrency check
+    const existingVn = voiceNotesRepo.findById(action.entity_id);
+    if (existingVn && base_server_version != null && existingVn.server_version > base_server_version) {
+      return {
+        result: "CONFLICT",
+        authoritativeEntity: existingVn as unknown as Record<string, unknown>,
+        auditEventId: null,
+        conflictCode: "STALE_BASE_VERSION",
       };
     }
   }
@@ -201,6 +219,16 @@ async function executeAction(
 
   // ── FOLLOW-UP DRAFT ACTIONS ─────────────────────────────────────────────────
   if (entity_type === "FOLLOW_UP_DRAFT") {
+    const existingDraft = draftsRepo.findById(action.entity_id);
+    if (existingDraft && base_server_version != null && existingDraft.server_version > base_server_version) {
+      return {
+        result: "CONFLICT",
+        authoritativeEntity: existingDraft as unknown as Record<string, unknown>,
+        auditEventId: null,
+        conflictCode: "STALE_BASE_VERSION",
+      };
+    }
+
     if (action_type === "CREATE_FROM_TRANSCRIPT") {
       const txId = String(payload.transcript_id ?? action.entity_id);
       const tx = transcriptsRepo.findById(txId);
@@ -218,7 +246,7 @@ async function executeAction(
     }
 
     if (action_type === "MARK_WORKER_REVIEWED") {
-      const draft = draftsRepo.findById(action.entity_id);
+      const draft = existingDraft ?? draftsRepo.findById(action.entity_id);
       if (!draft) {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "DRAFT_NOT_FOUND" };
       }
@@ -236,7 +264,7 @@ async function executeAction(
     }
 
     if (action_type === "SUBMIT_TO_ANM") {
-      const draft = draftsRepo.findById(action.entity_id);
+      const draft = existingDraft ?? draftsRepo.findById(action.entity_id);
       if (!draft) {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "DRAFT_NOT_FOUND" };
       }
@@ -262,7 +290,7 @@ async function executeAction(
       if (actor.role !== "ANM_REVIEWER" && actor.role !== "PHC_ADMIN") {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "ROLE_FORBIDDEN" };
       }
-      const draft = draftsRepo.findById(action.entity_id);
+      const draft = existingDraft ?? draftsRepo.findById(action.entity_id);
       if (!draft) {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "DRAFT_NOT_FOUND" };
       }
@@ -294,7 +322,7 @@ async function executeAction(
       if (actor.role !== "ANM_REVIEWER" && actor.role !== "PHC_ADMIN") {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "ROLE_FORBIDDEN" };
       }
-      const draft = draftsRepo.findById(action.entity_id);
+      const draft = existingDraft ?? draftsRepo.findById(action.entity_id);
       if (!draft) {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "DRAFT_NOT_FOUND" };
       }
@@ -327,7 +355,7 @@ async function executeAction(
       if (actor.role !== "ANM_REVIEWER" && actor.role !== "PHC_ADMIN") {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "ROLE_FORBIDDEN" };
       }
-      const draft = draftsRepo.findById(action.entity_id);
+      const draft = existingDraft ?? draftsRepo.findById(action.entity_id);
       if (!draft) {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "DRAFT_NOT_FOUND" };
       }
@@ -354,8 +382,18 @@ async function executeAction(
 
   // ── TASK ACTIONS ────────────────────────────────────────────────────────────
   if (entity_type === "TASK") {
+    const existingTask = tasksRepo.findById(action.entity_id);
+    if (existingTask && base_server_version != null && existingTask.server_version > base_server_version) {
+      return {
+        result: "CONFLICT",
+        authoritativeEntity: existingTask as unknown as Record<string, unknown>,
+        auditEventId: null,
+        conflictCode: "STALE_BASE_VERSION",
+      };
+    }
+
     if (action_type === "ACKNOWLEDGE") {
-      const task = tasksRepo.findById(action.entity_id);
+      const task = existingTask ?? tasksRepo.findById(action.entity_id);
       if (!task) {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "TASK_NOT_FOUND" };
       }
@@ -376,7 +414,7 @@ async function executeAction(
     }
 
     if (action_type === "COMPLETE") {
-      const task = tasksRepo.findById(action.entity_id);
+      const task = existingTask ?? tasksRepo.findById(action.entity_id);
       if (!task) {
         return { result: "REJECTED", authoritativeEntity: null, auditEventId: null, conflictCode: "TASK_NOT_FOUND" };
       }
@@ -408,3 +446,161 @@ async function executeAction(
     conflictCode: "UNKNOWN_ACTION_TYPE",
   };
 }
+
+/**
+ * Authoritatively resolves a detected sync conflict.
+ * Enforces strict role & area authorization, preserves both source snapshots in audit,
+ * and updates entity server version.
+ */
+export async function resolveConflict(
+  req: ConflictResolutionRequest,
+  actor: SafeUser
+): Promise<ConflictResolutionResponse> {
+  const { entity_type, entity_id, base_server_version, resolution_strategy, resolution_reason, local_snapshot, resolved_fields } = req;
+
+  // 1. FOLLOW_UP_DRAFT Conflict Resolution
+  if (entity_type === "FOLLOW_UP_DRAFT") {
+    const draft = draftsRepo.findById(entity_id);
+    if (!draft) throw new NotFoundError("Follow-up draft not found.");
+
+    const vn = voiceNotesRepo.findById(draft.voice_note_id);
+    if (!vn) throw new NotFoundError("Voice note associated with draft not found.");
+
+    const benRef = beneficiaryRepo.findById(vn.beneficiary_reference_id);
+    if (!benRef) throw new NotFoundError("Beneficiary reference not found.");
+
+    // Role & Area Authorization Checks
+    if (actor.role === "ASHA_WORKER") {
+      if (vn.created_by_user_id !== actor.id) {
+        throw new ForbiddenError("ASHA workers cannot resolve conflicts for drafts created by other workers.");
+      }
+      // ASHA CANNOT overwrite an ANM decision
+      if (["CONFIRMED", "REVISED", "DISMISSED"].includes(draft.state)) {
+        throw new ForbiddenError("Access denied: ASHA workers cannot overwrite an ANM supervisory decision (CONFIRMED/REVISED/DISMISSED).");
+      }
+    } else if (actor.role === "ANM_REVIEWER") {
+      if (!actor.assigned_area_id || benRef.area_id !== actor.assigned_area_id) {
+        throw new ForbiddenError("ANM cannot resolve conflicts for drafts outside their assigned administrative area.");
+      }
+    } else if (actor.role === "PHC_ADMIN") {
+      if (actor.assigned_area_id && benRef.area_id !== actor.assigned_area_id) {
+        throw new ForbiddenError("PHC Admin cannot resolve conflicts outside their assigned area.");
+      }
+    } else {
+      throw new ForbiddenError("Role unauthorized to resolve conflicts.");
+    }
+
+    // Apply Resolution Strategy
+    let updatedDraft = draft;
+    if (resolution_strategy === "KEEP_LOCAL" || resolution_strategy === "MANUAL_MERGE") {
+      const updates: Partial<Parameters<typeof draftsRepo.updateFields>[1]> = {};
+      if (resolved_fields?.summary && typeof resolved_fields.summary === "string") {
+        updates.summary = resolved_fields.summary;
+      }
+      if (resolved_fields?.proposed_due_at && typeof resolved_fields.proposed_due_at === "string") {
+        updates.proposed_due_at = resolved_fields.proposed_due_at;
+      }
+      if (resolved_fields?.proposed_owner_user_id && typeof resolved_fields.proposed_owner_user_id === "string") {
+        updates.proposed_owner_user_id = resolved_fields.proposed_owner_user_id;
+      }
+      if (resolved_fields?.citation_id && typeof resolved_fields.citation_id === "string") {
+        updates.citation_id = resolved_fields.citation_id;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        draftsRepo.updateFields(draft.id, updates);
+        updatedDraft = draftsRepo.findById(draft.id)!;
+      }
+    }
+
+    // Emit immutable audit event preserving both source versions
+    const audit = auditEventsRepo.emit({
+      actor_user_id: actor.id,
+      entity_type: "follow_up_draft",
+      entity_id: draft.id,
+      event_type: "CONFLICT_RESOLVED",
+      previous_state: draft.state,
+      next_state: updatedDraft.state,
+      safe_payload: {
+        resolution_strategy,
+        resolution_reason,
+        local_source_version: base_server_version,
+        server_source_version: draft.server_version,
+        resolved_by_role: actor.role,
+        local_snapshot,
+        server_snapshot: {
+          id: draft.id,
+          state: draft.state,
+          summary: draft.summary,
+          proposed_due_at: draft.proposed_due_at,
+          proposed_owner_user_id: draft.proposed_owner_user_id,
+          server_version: draft.server_version,
+        },
+      },
+    });
+
+    return {
+      success: true,
+      entity_type: "FOLLOW_UP_DRAFT",
+      entity_id: draft.id,
+      new_server_version: updatedDraft.server_version,
+      authoritative_entity: updatedDraft as unknown as Record<string, unknown>,
+      audit_event_id: audit.id,
+    };
+  }
+
+  // 2. TASK Conflict Resolution
+  if (entity_type === "TASK") {
+    const task = tasksRepo.findById(entity_id);
+    if (!task) throw new NotFoundError("Task not found.");
+
+    if (actor.role === "ASHA_WORKER" && task.owner_user_id !== actor.id) {
+      throw new ForbiddenError("ASHA workers cannot resolve conflicts for tasks assigned to other workers.");
+    }
+
+    let updatedTask = task;
+    if (resolution_strategy === "KEEP_LOCAL" || resolution_strategy === "MANUAL_MERGE") {
+      const updates: Partial<Parameters<typeof tasksRepo.updateFields>[1]> = {};
+      if (resolved_fields?.due_at && typeof resolved_fields.due_at === "string") {
+        updates.due_at = resolved_fields.due_at;
+      }
+      if (resolved_fields?.reviewer_note && typeof resolved_fields.reviewer_note === "string") {
+        updates.reviewer_note = resolved_fields.reviewer_note;
+      }
+      if (Object.keys(updates).length > 0) {
+        tasksRepo.updateFields(task.id, updates);
+        updatedTask = tasksRepo.findById(task.id)!;
+      }
+    }
+
+    const audit = auditEventsRepo.emit({
+      actor_user_id: actor.id,
+      entity_type: "task",
+      entity_id: task.id,
+      event_type: "CONFLICT_RESOLVED",
+      previous_state: task.status,
+      next_state: updatedTask.status,
+      safe_payload: {
+        resolution_strategy,
+        resolution_reason,
+        local_source_version: base_server_version,
+        server_source_version: task.server_version,
+        resolved_by_role: actor.role,
+        local_snapshot,
+        server_snapshot: task,
+      },
+    });
+
+    return {
+      success: true,
+      entity_type: "TASK",
+      entity_id: task.id,
+      new_server_version: updatedTask.server_version,
+      authoritative_entity: updatedTask as unknown as Record<string, unknown>,
+      audit_event_id: audit.id,
+    };
+  }
+
+  throw new PolicyError("Unsupported entity type for conflict resolution.", "INVALID_ENTITY_TYPE");
+}
+

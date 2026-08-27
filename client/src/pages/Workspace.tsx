@@ -37,9 +37,11 @@ import {
   discardLocalDraft,
   clearSyncedActions,
   processOfflineQueue,
+  resolveQueuedConflict,
   type QueuedAction,
 } from "../lib/offlineQueue";
 import { OfflineQueuePanel } from "../components/OfflineQueuePanel";
+import { ConflictReviewModal } from "../components/ConflictReviewModal";
 
 const logoImage = "/manus-storage/maatrumitra-care-orbit-logo_1689796a.png";
 
@@ -89,6 +91,7 @@ export default function Workspace() {
   // Offline queue state
   const [queuedActions, setQueuedActions] = useState<QueuedAction[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [activeConflictAction, setActiveConflictAction] = useState<QueuedAction | null>(null);
 
   // ANM state
   const [assignableAshas, setAssignableAshas] = useState<AuthUser[]>([]);
@@ -215,6 +218,51 @@ export default function Workspace() {
     await refreshQueue();
   }, [refreshQueue]);
 
+  // Load audit history when draft is created or updated
+  const refreshAuditHistory = useCallback(async (draftId: string) => {
+    try {
+      const res = await drafts.get(draftId);
+      setState((s) => ({ ...s, auditHistory: res.audit_history, citation: res.citation }));
+    } catch {}
+  }, []);
+
+  // Conflict resolution action
+  const handleResolveConflict = useCallback(
+    async (
+      actionId: string,
+      resolutionStrategy: "KEEP_SERVER" | "KEEP_LOCAL" | "MANUAL_MERGE",
+      resolvedFields?: Record<string, unknown>,
+      reason?: string
+    ) => {
+      const action = queuedActions.find((a) => a.action_id === actionId);
+      if (!action) return;
+
+      const entityType =
+        action.entity_type === "TRANSCRIPT_REVISION" ? "FOLLOW_UP_DRAFT" : action.entity_type;
+
+      const res = await sync.resolveConflict({
+        entity_type: entityType,
+        entity_id: action.entity_id,
+        base_server_version: action.base_server_version ?? 1,
+        resolution_strategy: resolutionStrategy,
+        resolved_fields: resolvedFields,
+        resolution_reason: reason || "Reconciled through conflict review screen",
+        local_snapshot: action.payload,
+      });
+
+      await resolveQueuedConflict(actionId, res.authoritative_entity);
+      await refreshQueue();
+
+      setState((s) => ({
+        ...s,
+        notice: `Conflict successfully resolved (${resolutionStrategy}). Version updated to ${res.new_server_version}.`,
+      }));
+
+      if (state.draftId) refreshAuditHistory(state.draftId);
+    },
+    [queuedActions, refreshQueue, state.draftId, refreshAuditHistory]
+  );
+
   // Admin reset action
   const handleAdminReset = useCallback(async () => {
     if (!window.confirm("Reset all synthetic fixtures and local storage? This restores the clean demo state.")) {
@@ -239,14 +287,6 @@ export default function Workspace() {
       setLoading(false);
     }
   }, [isANM, refreshQueue]);
-
-  // Load audit history when draft is created or updated
-  const refreshAuditHistory = useCallback(async (draftId: string) => {
-    try {
-      const res = await drafts.get(draftId);
-      setState((s) => ({ ...s, auditHistory: res.audit_history, citation: res.citation }));
-    } catch {}
-  }, []);
 
   // ── ASHA ACTIONS ──────────────────────────────────────────────────────────
 
@@ -751,7 +791,18 @@ export default function Workspace() {
             onRetryAction={handleRetryAction}
             onDiscardDraft={handleDiscardDraft}
             onClearSynced={handleClearSynced}
+            onReviewConflict={(act) => setActiveConflictAction(act)}
           />
+
+          {/* Conflict Review Modal */}
+          {activeConflictAction && (
+            <ConflictReviewModal
+              action={activeConflictAction}
+              userRole={user.role}
+              onClose={() => setActiveConflictAction(null)}
+              onResolve={handleResolveConflict}
+            />
+          )}
 
           {/* Reset Success Notice */}
           {resetSuccess && (

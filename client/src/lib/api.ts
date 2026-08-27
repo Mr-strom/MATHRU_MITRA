@@ -142,6 +142,7 @@ export interface VoiceNoteRecord {
   mime_type: string;
   byte_size: number;
   language_declared: string;
+  server_version?: number;
   created_at: string;
 }
 
@@ -178,7 +179,7 @@ export const drafts = {
     ),
 
   submitForReview: (id: string, workerNote?: string) =>
-    request<{ draft: DraftRecord }>("POST", `/follow-up-drafts/${id}/submit-review`, {
+    request<{ draft: DraftRecord }>("POST", `/follow-up-drafts/${id}/submit`, {
       worker_note: workerNote,
     }),
 
@@ -189,7 +190,10 @@ export const drafts = {
       { owner_user_id: ownerUserId, due_at: dueAt, reviewer_note: reviewerNote }
     ),
 
-  revise: (id: string, payload: { owner_user_id?: string; due_at?: string; reviewer_note: string; revised_summary?: string }) =>
+  revise: (
+    id: string,
+    payload: { owner_user_id?: string; due_at?: string; reviewer_note: string; revised_summary?: string }
+  ) =>
     request<{ draft: DraftRecord }>("POST", `/follow-up-drafts/${id}/revise`, payload),
 
   dismiss: (id: string, reason: string) =>
@@ -206,6 +210,7 @@ export interface DraftRecord {
   proposed_owner_user_id: string | null;
   proposed_due_at: string | null;
   citation_id: string | null;
+  server_version?: number;
   created_at: string;
   updated_at: string;
 }
@@ -236,20 +241,22 @@ export interface TaskRecord {
   reviewer_note: string | null;
   confirmed_at: string;
   completed_at: string | null;
+  server_version?: number;
   created_at: string;
 }
 
 // ── SOP search ────────────────────────────────────────────────────────────────
 export const sop = {
-  search: (q: string, limit = 5) =>
-    request<{ excerpts: SopExcerpt[]; total: number }>(
+  search: (query: string, limit = 5) =>
+    request<{ excerpts: SopExcerpt[]; query: string }>(
       "GET",
-      `/sop-excerpts/search?q=${encodeURIComponent(q)}&limit=${limit}`
+      `/sop-excerpts/search?query=${encodeURIComponent(query)}&limit=${limit}`
     ),
 };
 
 export interface SopExcerpt {
   id: string;
+  document_id: string;
   section_label: string;
   page_reference: string;
   excerpt_text: string;
@@ -302,6 +309,24 @@ export const sync = {
       audit_event_id: string | null;
       conflict_code: string | null;
     }>("POST", "/sync/actions", action),
+
+  resolveConflict: (payload: {
+    entity_type: "VOICE_NOTE" | "FOLLOW_UP_DRAFT" | "TASK";
+    entity_id: string;
+    base_server_version: number;
+    resolution_strategy: "KEEP_SERVER" | "KEEP_LOCAL" | "MANUAL_MERGE";
+    resolved_fields?: Record<string, unknown>;
+    resolution_reason: string;
+    local_snapshot: Record<string, unknown>;
+  }) =>
+    request<{
+      success: boolean;
+      entity_type: string;
+      entity_id: string;
+      new_server_version: number;
+      authoritative_entity: Record<string, unknown>;
+      audit_event_id: string;
+    }>("POST", "/sync/conflicts/resolve", payload),
 };
 
 // ── Audit events ──────────────────────────────────────────────────────

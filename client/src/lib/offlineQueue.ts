@@ -275,6 +275,7 @@ export async function processOfflineQueue(
         syncedCount++;
       } else if (res.result === "CONFLICT") {
         action.sync_state = "CONFLICT_REVIEW_REQUIRED";
+        action.authoritative_entity = res.authoritative_entity;
         action.conflict_code = res.conflict_code;
         action.retry_count += 1;
         conflictCount++;
@@ -296,3 +297,22 @@ export async function processOfflineQueue(
 
   return { syncedCount, failedCount, conflictCount };
 }
+
+/**
+ * Marks a queued conflict as authoritatively resolved after calling /sync/conflicts/resolve.
+ */
+export async function resolveQueuedConflict(
+  actionId: string,
+  resolvedEntity: Record<string, unknown>
+): Promise<void> {
+  const actions = await getAllQueuedActions();
+  const action = actions.find((a) => a.action_id === actionId);
+  if (!action) return;
+
+  action.sync_state = "SYNCED";
+  action.authoritative_entity = resolvedEntity;
+  action.conflict_code = null;
+  action.last_error = null;
+  await updateAction(action);
+}
+

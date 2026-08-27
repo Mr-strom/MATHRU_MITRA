@@ -109,3 +109,29 @@ export const SYNC_STATES = {
 } as const;
 
 export type SyncState = (typeof SYNC_STATES)[keyof typeof SYNC_STATES];
+
+// ── Conflict codes ────────────────────────────────────────────────────────────
+
+export const CONFLICT_CODES = {
+  STALE_BASE_VERSION: "STALE_BASE_VERSION",
+  ILLEGAL_STATE: "ILLEGAL_STATE",
+  STATE_MISMATCH: "STATE_MISMATCH",
+  ROLE_FORBIDDEN: "ROLE_FORBIDDEN",
+  AREA_MISMATCH: "AREA_MISMATCH",
+  DECISION_LOCKED: "DECISION_LOCKED",
+  CONSENT_REQUIRED: "CONSENT_REQUIRED",
+} as const;
+
+export type ConflictCode = (typeof CONFLICT_CODES)[keyof typeof CONFLICT_CODES];
+
+// ── Conflict resolution strategies ────────────────────────────────────────────
+
+export const CONFLICT_RESOLUTION_STRATEGIES = {
+  KEEP_SERVER: "KEEP_SERVER",
+  KEEP_LOCAL: "KEEP_LOCAL",
+  MANUAL_MERGE: "MANUAL_MERGE",
+} as const;
+
+export type ConflictResolutionStrategy =
+  (typeof CONFLICT_RESOLUTION_STRATEGIES)[keyof typeof CONFLICT_RESOLUTION_STRATEGIES];
+

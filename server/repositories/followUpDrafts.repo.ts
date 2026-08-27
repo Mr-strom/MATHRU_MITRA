@@ -18,6 +18,7 @@ export interface FollowUpDraftRow {
   extraction_confidence: string | null;
   extraction_raw_json: string | null;
   citation_id: string | null;
+  server_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -41,8 +42,8 @@ export function create(input: CreateDraftInput): FollowUpDraftRow {
     INSERT INTO follow_up_drafts
       (id, voice_note_id, transcript_id, state, administrative_category,
        summary, proposed_owner_user_id, proposed_due_at, extraction_confidence,
-       extraction_raw_json, citation_id, created_at, updated_at)
-    VALUES (?, ?, ?, 'TRANSCRIPT_READY', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       extraction_raw_json, citation_id, server_version, created_at, updated_at)
+    VALUES (?, ?, ?, 'TRANSCRIPT_READY', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
   `).run(
     id, input.voice_note_id, input.transcript_id,
     input.administrative_category ?? null,
@@ -75,12 +76,27 @@ export function updateState(
     const sets = allowed.filter((k) => k in extra).map((k) => `${k} = ?`).join(", ");
     const values = allowed.filter((k) => k in extra).map((k) => extra[k] ?? null);
     getDb().prepare(
-      `UPDATE follow_up_drafts SET state = ?, updated_at = ?, ${sets} WHERE id = ?`
+      `UPDATE follow_up_drafts SET state = ?, server_version = server_version + 1, updated_at = ?, ${sets} WHERE id = ?`
     ).run(state, now, ...values, id);
   } else {
     getDb().prepare(
-      "UPDATE follow_up_drafts SET state = ?, updated_at = ? WHERE id = ?"
+      "UPDATE follow_up_drafts SET state = ?, server_version = server_version + 1, updated_at = ? WHERE id = ?"
     ).run(state, now, id);
+  }
+}
+
+export function updateFields(
+  id: string,
+  fields: Partial<Pick<FollowUpDraftRow, "summary" | "proposed_owner_user_id" | "proposed_due_at" | "citation_id" | "administrative_category">>
+): void {
+  const now = new Date().toISOString();
+  const allowed = ["summary", "proposed_owner_user_id", "proposed_due_at", "citation_id", "administrative_category"] as const;
+  const sets = allowed.filter((k) => k in fields).map((k) => `${k} = ?`).join(", ");
+  const values = allowed.filter((k) => k in fields).map((k) => fields[k] ?? null);
+  if (sets.length > 0) {
+    getDb().prepare(
+      `UPDATE follow_up_drafts SET server_version = server_version + 1, updated_at = ?, ${sets} WHERE id = ?`
+    ).run(now, ...values, id);
   }
 }
 

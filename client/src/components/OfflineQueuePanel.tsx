@@ -24,6 +24,7 @@ interface OfflineQueuePanelProps {
   onRetryAction: (actionId: string) => void;
   onDiscardDraft: (actionId: string) => void;
   onClearSynced: () => void;
+  onReviewConflict?: (action: QueuedAction) => void;
 }
 
 export function OfflineQueuePanel({
@@ -36,6 +37,7 @@ export function OfflineQueuePanel({
   onRetryAction,
   onDiscardDraft,
   onClearSynced,
+  onReviewConflict,
 }: OfflineQueuePanelProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -193,6 +195,17 @@ export function OfflineQueuePanel({
                   </div>
 
                   <div className="queue-item-controls">
+                    {action.sync_state === "CONFLICT_REVIEW_REQUIRED" && onReviewConflict && (
+                      <button
+                        className="item-btn-conflict-review"
+                        onClick={() => onReviewConflict(action)}
+                        type="button"
+                        aria-label={`Review conflict for action ${action.action_id}`}
+                      >
+                        <HelpCircle size={12} /> Review Conflict
+                      </button>
+                    )}
+
                     {(action.sync_state === "SYNC_FAILED" || action.sync_state === "CONFLICT_REVIEW_REQUIRED") && (
                       <button
                         className="item-btn-retry"
