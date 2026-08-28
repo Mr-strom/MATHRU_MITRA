@@ -18,6 +18,8 @@ interface OfflineQueuePanelProps {
   effectiveOnline: boolean;
   isSimulatedOffline: boolean;
   toggleSimulatedOffline: () => void;
+  isLowBandwidth?: boolean;
+  toggleLowBandwidth?: () => void;
   queuedActions: QueuedAction[];
   isSyncing: boolean;
   onSyncNow: () => void;
@@ -31,6 +33,8 @@ export function OfflineQueuePanel({
   effectiveOnline,
   isSimulatedOffline,
   toggleSimulatedOffline,
+  isLowBandwidth,
+  toggleLowBandwidth,
   queuedActions,
   isSyncing,
   onSyncNow,
@@ -107,6 +111,20 @@ export function OfflineQueuePanel({
         </div>
 
         <div className="offline-status-right">
+          {/* Low Bandwidth toggle */}
+          {toggleLowBandwidth && (
+            <label className="offline-toggle-label">
+              <input
+                type="checkbox"
+                checked={Boolean(isLowBandwidth)}
+                onChange={toggleLowBandwidth}
+                className="offline-toggle-checkbox"
+                aria-label="Toggle low-bandwidth mode for rural field connectivity"
+              />
+              <span>Low-Bandwidth Mode</span>
+            </label>
+          )}
+
           {/* Simulation toggle */}
           <label className="offline-toggle-label">
             <input

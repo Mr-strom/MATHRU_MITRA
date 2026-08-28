@@ -8,7 +8,7 @@
  * - Preserves non-diagnostic administrative boundary.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   AlertTriangle, ShieldAlert, CheckCircle2, ArrowRight,
   X, Check, RefreshCw, FileText, User, Clock, AlertCircle
@@ -38,6 +38,17 @@ export function ConflictReviewModal({
   const [mergedSummary, setMergedSummary] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Close modal on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const serverEntity = (action.authoritative_entity ?? {}) as Record<string, unknown>;
   const localPayload = action.payload ?? {};

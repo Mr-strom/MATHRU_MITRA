@@ -67,7 +67,14 @@ interface WorkspaceState {
 export default function Workspace() {
   const { user, logout } = useAuth();
   const [, navigate] = useLocation();
-  const { isOnline, isSimulatedOffline, effectiveOnline, toggleSimulatedOffline } = useNetworkStatus();
+  const {
+    isOnline,
+    isSimulatedOffline,
+    effectiveOnline,
+    isLowBandwidth,
+    toggleSimulatedOffline,
+    toggleLowBandwidth,
+  } = useNetworkStatus();
 
   const [state, setState] = useState<WorkspaceState>({
     step: "idle",
@@ -85,6 +92,7 @@ export default function Workspace() {
     notice: null,
   });
 
+  const [srAnnouncement, setSrAnnouncement] = useState<string>("");
   const [editedTranscript, setEditedTranscript] = useState("");
   const [reviewNote, setReviewNote] = useState("");
   const [dismissReason, setDismissReason] = useState("");
@@ -255,6 +263,7 @@ export default function Workspace() {
       await resolveQueuedConflict(actionId, res.authoritative_entity);
       await refreshQueue();
 
+      setSrAnnouncement(`Conflict resolved authoritatively with strategy ${resolutionStrategy}. Server version updated.`);
       setState((s) => ({
         ...s,
         notice: `Conflict successfully resolved (${resolutionStrategy}). Version updated to ${res.new_server_version}.`,
@@ -572,13 +581,14 @@ export default function Workspace() {
 
   const confirmDraft = useCallback(async () => {
     if (!state.draftId || !selectedOwnerId) {
-      setError("Please select an eligible ASHA task owner.");
+      setError("Please select an eligible ASHA task owner from your area.");
       return;
     }
     setLoading(true);
     try {
       const due = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
       const result = await drafts.confirm(state.draftId, selectedOwnerId, due, reviewNote || undefined);
+      setSrAnnouncement("ANM confirmed follow-up task. Task assigned to ASHA worker.");
       setState((s) => ({
         ...s,
         step: "task_open",
@@ -591,13 +601,13 @@ export default function Workspace() {
       refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
-      else setError("Failed to confirm draft.");
+      else setError("Failed to confirm draft. Please verify connection and retry.");
     }
   }, [state.draftId, selectedOwnerId, reviewNote, refreshAuditHistory]);
 
   const executeRevise = useCallback(async () => {
     if (!state.draftId || !reviewNote.trim()) {
-      setError("Reviewer note is required when revising a draft.");
+      setError("Reviewer note is required. Please type an administrative reason before revising.");
       return;
     }
     setLoading(true);
@@ -609,6 +619,7 @@ export default function Workspace() {
         reviewer_note: reviewNote,
         revised_summary: revisedSummary || undefined,
       });
+      setSrAnnouncement("ANM revised follow-up draft. Changes logged in audit trail.");
       setState((s) => ({
         ...s,
         draft: result.draft,
@@ -619,18 +630,19 @@ export default function Workspace() {
       refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
-      else setError("Failed to revise draft.");
+      else setError("Failed to revise draft. Please verify connection and retry.");
     }
   }, [state.draftId, reviewNote, revisedDueDays, selectedOwnerId, revisedSummary, refreshAuditHistory]);
 
   const dismissDraft = useCallback(async () => {
     if (!state.draftId || !dismissReason.trim()) {
-      setError("Please enter a dismissal reason.");
+      setError("Dismissal reason is required. Please specify why no follow-up is needed.");
       return;
     }
     setLoading(true);
     try {
       const result = await drafts.dismiss(state.draftId, dismissReason);
+      setSrAnnouncement("Draft dismissed by ANM reviewer.");
       setState((s) => ({
         ...s,
         draft: result.draft,
@@ -640,7 +652,7 @@ export default function Workspace() {
       refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
-      else setError("Failed to dismiss draft.");
+      else setError("Failed to dismiss draft. Please verify connection and retry.");
     }
   }, [state.draftId, dismissReason, refreshAuditHistory]);
 
@@ -652,6 +664,7 @@ export default function Workspace() {
     try {
       await tasks.acknowledge(state.taskId);
       const result = await tasks.complete(state.taskId, "Completed home visit follow-up.");
+      setSrAnnouncement("Follow-up task acknowledged and marked complete. Workflow finalized.");
       setState((s) => ({
         ...s,
         step: "task_done",
@@ -662,7 +675,7 @@ export default function Workspace() {
       if (state.draftId) refreshAuditHistory(state.draftId);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.body.error);
-      else setError("Failed to complete task.");
+      else setError("Failed to complete task. Please verify connection and retry.");
     }
   }, [state.taskId, state.draftId, refreshAuditHistory]);
 
@@ -687,9 +700,20 @@ export default function Workspace() {
   ];
 
   return (
-    <main className="workspace-shell">
+    <main className={`workspace-shell ${isLowBandwidth ? "low-bandwidth" : ""}`}>
+      {/* Skip to Main Content Link for Keyboard Users */}
+      <a href="#workspace-main-content" className="skip-link">
+        Skip to main content
+      </a>
+
+      {/* Screen Reader Live Region for State Announcements */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {srAnnouncement}
+      </div>
+
       {/* Header */}
       <header className="workspace-header" aria-label="Workspace header">
+        <h1 className="sr-only">MaatruMitra Maternal Care Follow-Up Coordination Workspace</h1>
         <a className="brand" href="/" aria-label="MaatruMitra home">
           <img className="brand-mark" src={logoImage} alt="" />
           <span className="brand-name">Maatru<span>Mitra</span></span>
@@ -804,13 +828,15 @@ export default function Workspace() {
         </aside>
 
         {/* Main panel */}
-        <section className="ws-main" aria-label="Active workflow panel">
+        <section className="ws-main" id="workspace-main-content" aria-label="Active workflow panel">
 
           {/* Offline Queue & Network Status Panel */}
           <OfflineQueuePanel
             effectiveOnline={effectiveOnline}
             isSimulatedOffline={isSimulatedOffline}
             toggleSimulatedOffline={toggleSimulatedOffline}
+            isLowBandwidth={isLowBandwidth}
+            toggleLowBandwidth={toggleLowBandwidth}
             queuedActions={queuedActions}
             isSyncing={isSyncing}
             onSyncNow={handleSyncQueue}

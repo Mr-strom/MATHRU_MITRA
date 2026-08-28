@@ -40,9 +40,45 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; background: var(--ink); }
 body { margin: 0; overflow-x: hidden; background: var(--ink); color: var(--paper); font-family: "Manrope", sans-serif; -webkit-font-smoothing: antialiased; }
-button, a { -webkit-tap-highlight-color: transparent; }
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
 button { font: inherit; }
-button:focus-visible, a:focus-visible { outline: 2px solid var(--marigold); outline-offset: 4px; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--marigold) !important;
+  outline-offset: 3px !important;
+}
+
+/* ── Screen Reader & Accessibility Utilities ────────────────────────────────── */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.skip-link {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 999;
+  padding: 10px 18px;
+  background: var(--marigold);
+  color: var(--ink);
+  font-weight: 800;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  transform: translateY(-180%);
+  transition: transform 160ms var(--ease-out);
+  text-decoration: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
 
 .site-shell { overflow: clip; background: var(--ink); }
 .site-nav { position: fixed; z-index: 50; top: 0; left: 0; right: 0; height: 84px; display: flex; align-items: center; justify-content: space-between; padding: 0 5.4vw; transition: background-color 220ms var(--ease-out), backdrop-filter 220ms var(--ease-out), height 220ms var(--ease-out); }
@@ -402,6 +438,57 @@ em { color: var(--marigold); font-style: italic; }
 .report-panel-loading, .report-panel-error, .report-panel-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; text-align: center; gap: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; color: rgba(240,237,230,0.7); }
 .report-panel-error h4 { margin: 0; color: var(--danger); font-size: 1rem; }
 .report-panel-error p { margin: 0; font-size: 0.78rem; max-width: 400px; }
+
+/* ── Low-Bandwidth Mode & Accessibility Enhancements ───────────────────────── */
+.low-bandwidth * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+.low-bandwidth .voice-wave i {
+  animation: none !important;
+  height: 8px !important;
+}
+.low-bandwidth .spin {
+  animation: none !important;
+}
+.low-bandwidth .hero-visual {
+  animation: none !important;
+}
+
+/* ── Non-Color Dependent Status Indicator Borders & Shapes ─────────────────── */
+.sync-badge { border: 1px solid currentColor; }
+.sync-local { border-style: dashed; background: rgba(255,255,255,0.08); color: rgba(240,237,230,0.9); }
+.sync-waiting { border-style: dotted; background: rgba(233,168,48,0.15); color: var(--marigold); }
+.sync-syncing { border-style: solid; background: rgba(143,184,131,0.15); color: var(--leaf); }
+.sync-synced { border-style: double; border-width: 2px; background: rgba(143,184,131,0.2); color: var(--leaf); }
+.sync-failed { border-style: solid; border-width: 2px; background: rgba(214,116,100,0.18); color: var(--danger); }
+.sync-conflict { border-style: solid; border-width: 2px; background: rgba(233,168,48,0.2); color: var(--marigold-soft); }
+
+/* ── Mobile Touch Targets (Minimum 44px) ───────────────────────────────────── */
+@media (max-width: 768px) {
+  .button-primary, .ws-action, .report-btn-primary, .report-btn-secondary,
+  .ws-confirm-btn, .ws-dismiss-btn, .item-btn-retry, .item-btn-discard, .item-btn-conflict-review {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ws-view-tab {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+  .ws-main {
+    padding: 20px 16px;
+  }
+  .ws-card {
+    padding: 24px 18px;
+  }
+  .ws-fact-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 
 
 
