@@ -12,6 +12,7 @@ import { requireAuth, requireRole } from "../middleware/auth.middleware.js";
 import { runMigrations } from "../db/migrate.js";
 import { seed } from "../db/seed.js";
 import * as auditEventsRepo from "../repositories/auditEvents.repo.js";
+import * as reportingService from "../services/reporting.service.js";
 import { PolicyError } from "../services/errors.js";
 
 const router = Router();
@@ -74,6 +75,43 @@ router.post(
         notice: "PROTOTYPE — Fictional demo identities and synthetic fixtures restored.",
         reset_at: resetAt,
       });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/v1/admin/reports/operational — Retrieve operational supervisor aggregate metrics
+router.get(
+  "/reports/operational",
+  requireAuth,
+  requireRole("PHC_ADMIN"),
+  async (req, res, next) => {
+    try {
+      const report = await reportingService.getOperationalReport(req.user!);
+      res.json(report);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/v1/admin/reports/export — Export sanitized operational aggregate report (CSV or JSON)
+router.get(
+  "/reports/export",
+  requireAuth,
+  requireRole("PHC_ADMIN"),
+  async (req, res, next) => {
+    try {
+      const format = req.query.format === "json" ? "json" : "csv";
+      const { contentType, filename, content } = await reportingService.exportOperationalReport(
+        req.user!,
+        format
+      );
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(content);
     } catch (err) {
       next(err);
     }

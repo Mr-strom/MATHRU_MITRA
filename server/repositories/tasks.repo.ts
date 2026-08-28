@@ -28,7 +28,7 @@ export interface CreateTaskInput {
   due_at: string;
   reviewer_user_id: string;
   reviewer_note?: string;
-  confirmed_at: string;
+  confirmed_at?: string;
 }
 
 export function create(input: CreateTaskInput): TaskRow {
@@ -41,7 +41,7 @@ export function create(input: CreateTaskInput): TaskRow {
     VALUES (?, ?, 'TASK_OPEN', ?, ?, ?, ?, ?, 1, ?, ?)
   `).run(
     id, input.draft_id, input.owner_user_id, input.due_at, input.reviewer_user_id,
-    input.reviewer_note ?? null, input.confirmed_at, now, now
+    input.reviewer_note ?? null, input.confirmed_at ?? now, now, now
   );
   return findById(id)!;
 }

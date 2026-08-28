@@ -334,3 +334,54 @@ export const ConflictResolutionResponseSchema = z.object({
 });
 export type ConflictResolutionResponse = z.infer<typeof ConflictResolutionResponseSchema>;
 
+// ── Operational supervisor reporting contracts ────────────────────────────────
+
+export const AreaBreakdownItemSchema = z.object({
+  area_id: z.string(),
+  district: z.string(),
+  taluk: z.string(),
+  phc_name: z.string(),
+  ward_village_label: z.string(),
+  drafts_count: z.number(),
+  tasks_count: z.number(),
+  active_workers_count: z.number(),
+});
+export type AreaBreakdownItem = z.infer<typeof AreaBreakdownItemSchema>;
+
+export const RoleActivityItemSchema = z.object({
+  role: z.string(),
+  actions_count: z.number(),
+});
+export type RoleActivityItem = z.infer<typeof RoleActivityItemSchema>;
+
+export const TasksSummarySchema = z.object({
+  open: z.number(),
+  acknowledged: z.number(),
+  completed: z.number(),
+  overdue: z.number(),
+  total: z.number(),
+});
+export type TasksSummary = z.infer<typeof TasksSummarySchema>;
+
+export const SyncReliabilitySummarySchema = z.object({
+  total_synced_actions: z.number(),
+  applied: z.number(),
+  conflicts: z.number(),
+  failures: z.number(),
+  resolved_conflicts: z.number(),
+});
+export type SyncReliabilitySummary = z.infer<typeof SyncReliabilitySummarySchema>;
+
+export const OperationalReportResponseSchema = z.object({
+  drafts_awaiting_review: z.number(),
+  tasks_summary: TasksSummarySchema,
+  sync_reliability: SyncReliabilitySummarySchema,
+  median_turnaround_minutes: z.number().nullable(),
+  area_breakdown: z.array(AreaBreakdownItemSchema),
+  role_activity: z.array(RoleActivityItemSchema),
+  generated_at: z.string(),
+  safety_notice: z.string(),
+});
+export type OperationalReportResponse = z.infer<typeof OperationalReportResponseSchema>;
+
+

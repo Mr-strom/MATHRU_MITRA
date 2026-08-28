@@ -266,12 +266,77 @@ export interface SopExcerpt {
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
+export interface AreaBreakdownItem {
+  area_id: string;
+  district: string;
+  taluk: string;
+  phc_name: string;
+  ward_village_label: string;
+  drafts_count: number;
+  tasks_count: number;
+  active_workers_count: number;
+}
+
+export interface RoleActivityItem {
+  role: string;
+  actions_count: number;
+}
+
+export interface TasksSummary {
+  open: number;
+  acknowledged: number;
+  completed: number;
+  overdue: number;
+  total: number;
+}
+
+export interface SyncReliabilitySummary {
+  total_synced_actions: number;
+  applied: number;
+  conflicts: number;
+  failures: number;
+  resolved_conflicts: number;
+}
+
+export interface OperationalReportResponse {
+  drafts_awaiting_review: number;
+  tasks_summary: TasksSummary;
+  sync_reliability: SyncReliabilitySummary;
+  median_turnaround_minutes: number | null;
+  area_breakdown: AreaBreakdownItem[];
+  role_activity: RoleActivityItem[];
+  generated_at: string;
+  safety_notice: string;
+}
+
 export const admin = {
   resetDemo: () =>
     request<{ success: boolean; message: string; notice: string; reset_at: string }>(
       "POST",
       "/admin/demo-reset"
     ),
+
+  getOperationalReport: () =>
+    request<OperationalReportResponse>("GET", "/admin/reports/operational"),
+
+  downloadReportExport: async (format: "csv" | "json" = "csv"): Promise<void> => {
+    const res = await fetch(`${BASE}/admin/reports/export?format=${format}`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Export failed", code: "EXPORT_ERROR" }));
+      throw new ApiRequestError(res.status, err as ApiError);
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `maatrumitra_operational_report_${new Date().toISOString().slice(0, 10)}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
 };
 
 // ── Demo readiness diagnostics ────────────────────────────────────────────────

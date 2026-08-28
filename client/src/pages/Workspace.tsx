@@ -42,6 +42,7 @@ import {
 } from "../lib/offlineQueue";
 import { OfflineQueuePanel } from "../components/OfflineQueuePanel";
 import { ConflictReviewModal } from "../components/ConflictReviewModal";
+import { SupervisorReportPanel } from "../components/SupervisorReportPanel";
 
 const logoImage = "/manus-storage/maatrumitra-care-orbit-logo_1689796a.png";
 
@@ -92,6 +93,7 @@ export default function Workspace() {
   const [queuedActions, setQueuedActions] = useState<QueuedAction[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeConflictAction, setActiveConflictAction] = useState<QueuedAction | null>(null);
+  const [adminViewMode, setAdminViewMode] = useState<"workflow" | "reporting">("workflow");
 
   // ANM state
   const [assignableAshas, setAssignableAshas] = useState<AuthUser[]>([]);
@@ -692,6 +694,30 @@ export default function Workspace() {
           <img className="brand-mark" src={logoImage} alt="" />
           <span className="brand-name">Maatru<span>Mitra</span></span>
         </a>
+
+        {isAdmin && (
+          <div className="ws-view-switcher" role="tablist" aria-label="Admin view modes">
+            <button
+              role="tab"
+              aria-selected={adminViewMode === "workflow"}
+              className={`ws-view-tab ${adminViewMode === "workflow" ? "ws-view-tab-active" : ""}`}
+              onClick={() => setAdminViewMode("workflow")}
+              type="button"
+            >
+              Workflow Review
+            </button>
+            <button
+              role="tab"
+              aria-selected={adminViewMode === "reporting"}
+              className={`ws-view-tab ${adminViewMode === "reporting" ? "ws-view-tab-active" : ""}`}
+              onClick={() => setAdminViewMode("reporting")}
+              type="button"
+            >
+              Supervisor Reporting
+            </button>
+          </div>
+        )}
+
         <div className="workspace-user-info">
           <span className="ws-role-badge">{user.role.replace(/_/g, " ")}</span>
           <span className="ws-username">{user.display_name}</span>
@@ -828,15 +854,20 @@ export default function Workspace() {
             </div>
           )}
 
-          {/* ── IDLE ─────────────────────────────────────────────────── */}
-          {state.step === "idle" && (
-            <div className="ws-card">
-              <div className="ws-card-label"><Mic size={14} /> Start demo flow</div>
-              <h2 className="ws-card-heading">Begin with a<br /><em>Kannada field note.</em></h2>
-              <p className="ws-card-body">
-                This workspace demonstrates the administrative follow-up workflow connected to the real API.
-                Uses synthetic beneficiary fixture <code>BEN-DEMO-001</code> and the fake STT provider.
-              </p>
+          {/* Supervisor Reporting Dashboard Mode */}
+          {isAdmin && adminViewMode === "reporting" ? (
+            <SupervisorReportPanel />
+          ) : (
+            <>
+              {/* ── IDLE ─────────────────────────────────────────────────── */}
+              {state.step === "idle" && (
+                <div className="ws-card">
+                  <div className="ws-card-label"><Mic size={14} /> Start demo flow</div>
+                  <h2 className="ws-card-heading">Begin with a<br /><em>Kannada field note.</em></h2>
+                  <p className="ws-card-body">
+                    This workspace demonstrates the administrative follow-up workflow connected to the real API.
+                    Uses synthetic beneficiary fixture <code>BEN-DEMO-001</code> and the fake STT provider.
+                  </p>
 
               {isASHA && (
                 <button className="button-primary ws-action" onClick={startDemoFlow} disabled={state.loading} type="button" id="ws-start-demo">
@@ -1100,6 +1131,8 @@ export default function Workspace() {
                 ))}
               </div>
             </div>
+          )}
+            </>
           )}
         </section>
       </div>
